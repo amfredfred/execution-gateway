@@ -6,13 +6,12 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { RawData, WebSocket } from 'ws';
+import { DashboardConnectionRegistryService } from '../dashboard-connections/dashboard-connection-registry.service';
 import { RoomRegistryService } from '../rooms/room-registry.service';
 
 interface SignalEngineMessage {
   event?: string;
-  payload?: {
-    symbol?: string;
-  };
+  payload?: Record<string, unknown> & { symbol?: string };
 }
 
 @Injectable()
@@ -23,13 +22,17 @@ export class SignalEngineSubscriberService
   private socket?: WebSocket;
   private reconnectTimer?: NodeJS.Timeout;
   private unsubscribeRoomChanges?: () => void;
+  private unsubscribeMetricDemand?: () => void;
   private desiredSymbols = new Set<string>();
   private subscribedSymbols = new Set<string>();
+  private metricsDesired = false;
+  private metricsSubscribed = false;
   private stopping = false;
 
   constructor(
     private readonly config: ConfigService,
     private readonly rooms: RoomRegistryService,
+    private readonly dashboards: DashboardConnectionRegistryService,
   ) {}
 
   onModuleInit() {
@@ -37,12 +40,19 @@ export class SignalEngineSubscriberService
       this.desiredSymbols = new Set(symbols);
       this.syncSubscriptions();
     });
+    this.unsubscribeMetricDemand = this.dashboards.onSignalMetricDemandChanged(
+      (subscribers) => {
+        this.metricsDesired = subscribers > 0;
+        this.syncMetricSubscription();
+      },
+    );
     this.connect();
   }
 
   onModuleDestroy() {
     this.stopping = true;
     this.unsubscribeRoomChanges?.();
+    this.unsubscribeMetricDemand?.();
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.socket?.close();
   }
@@ -61,7 +71,9 @@ export class SignalEngineSubscriberService
     this.socket.on('open', () => {
       this.logger.log('Connected as sole Signal Engine subscriber');
       this.subscribedSymbols.clear();
+      this.metricsSubscribed = false;
       this.syncSubscriptions();
+      this.syncMetricSubscription();
     });
     this.socket.on('message', (raw) => this.handleMessage(raw));
     this.socket.on('close', () => this.scheduleReconnect());
@@ -79,12 +91,53 @@ export class SignalEngineSubscriberService
       return;
     }
 
+    if (message.event === 'metrics.snapshot' && message.payload) {
+      const delivered = this.dashboards.broadcastSignalMetrics(
+        this.sanitizeMetrics(message.payload),
+      );
+      this.logger.debug(
+        `Delivered signal metrics to ${delivered} dashboard(s)`,
+      );
+      return;
+    }
+
     if (message.event !== 'signal.triggered' || !message.payload?.symbol)
       return;
     const delivered = this.rooms.broadcast(message.payload.symbol, serialized);
     this.logger.debug(
       `Delivered ${message.payload.symbol} signal to ${delivered} engine(s)`,
     );
+  }
+
+  private syncMetricSubscription() {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
+    if (this.metricsDesired && !this.metricsSubscribed) {
+      this.socket.send(JSON.stringify({ action: 'subscribe_metrics' }));
+      this.metricsSubscribed = true;
+    } else if (!this.metricsDesired && this.metricsSubscribed) {
+      this.socket.send(JSON.stringify({ action: 'unsubscribe_metrics' }));
+      this.metricsSubscribed = false;
+    }
+  }
+
+  private sanitizeMetrics(payload: Record<string, unknown>) {
+    const system = (payload.system ?? {}) as Record<string, unknown>;
+    const api = (payload.api ?? {}) as Record<string, unknown>;
+    return {
+      observed_at: payload.ts ?? Date.now(),
+      system: {
+        uptime_ms: system.uptime_ms,
+        uptime_s: system.uptime_s,
+        memory_mb: system.memory_mb,
+      },
+      metrics: payload.metrics ?? {},
+      latency: payload.latency ?? {},
+      scheduler: payload.scheduler ?? [],
+      api: {
+        calls_last_min: api.calls_last_min,
+        by_source: api.by_source,
+      },
+    };
   }
 
   private syncSubscriptions() {

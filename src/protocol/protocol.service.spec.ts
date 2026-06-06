@@ -56,4 +56,25 @@ describe('ProtocolService', () => {
 
     expect(result.valid).toBe(true);
   });
+
+  it('accepts an execution lifecycle transition without a signal payload', () => {
+    const result = service.validate({
+      protocol_version: '1.0',
+      message_id: 'message_lifecycle_001',
+      event: 'execution.lifecycle',
+      sent_at: '2026-06-06T12:00:00.000Z',
+      payload: {
+        engine_id: 'engine_device_001',
+        signal_id: 'signal_reference_001',
+        account_login: '106189638',
+        stage: 'opened',
+        trade_id: 'trade_reference_001',
+        broker_ticket: '123456',
+        observed_at: '2026-06-06T12:00:00.000Z',
+      },
+    });
+
+    expect(result.valid).toBe(true);
+    expect(result.message?.payload).not.toHaveProperty('signal');
+  });
 });

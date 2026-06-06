@@ -1,5 +1,6 @@
 export interface LicenseActivation {
   licenseId: string;
+  engineDeviceId?: string;
   symbols: ReadonlySet<string>;
   expiresAt: string | null;
 }
@@ -16,4 +17,11 @@ export interface LicenseRecord {
   symbols: string[];
   expires_at?: string | null;
   enabled?: boolean;
+}
+
+export interface LicenseActivationContext {
+  engineId: string;
+  deviceName: string;
+  engineVersion: string;
+  platform: Record<string, unknown>;
 }

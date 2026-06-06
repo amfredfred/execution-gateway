@@ -13,6 +13,11 @@ import type { ProtocolMessage } from '../protocol/protocol.types';
 import { RoomRegistryService } from '../rooms/room-registry.service';
 import { LicenseService } from '../licensing/license.service';
 import { ConnectionRegistryService } from './connection-registry.service';
+import { EngineSessionService } from './engine-session.service';
+import {
+  ExecutionLifecycleService,
+  type ExecutionLifecycleTransition,
+} from './execution-lifecycle.service';
 
 @WebSocketGateway({ path: '/engine' })
 export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -23,7 +28,16 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly connections: ConnectionRegistryService,
     private readonly rooms: RoomRegistryService,
     private readonly licenses: LicenseService,
-  ) {}
+    private readonly sessions: EngineSessionService,
+    private readonly lifecycles: ExecutionLifecycleService,
+  ) {
+    this.connections.onStale((socket, engineId, reason) => {
+      if (engineId) this.rooms.leave(engineId);
+      this.closeSession(socket, reason);
+      this.connections.remove(socket);
+      socket.close(1008, reason);
+    });
+  }
 
   handleConnection(socket: WebSocket) {
     this.connections.add(socket);
@@ -33,6 +47,7 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
   handleDisconnect(socket: WebSocket) {
     const engineId = this.connections.engineId(socket);
     if (engineId) this.rooms.leave(engineId);
+    this.closeSession(socket, 'socket_disconnected');
     this.connections.remove(socket);
     this.logger.log(
       `Engine socket disconnected; total=${this.connections.count}`,
@@ -60,12 +75,16 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() message: ProtocolMessage,
   ) {
     const accepted = this.accept('engine.heartbeat', message);
-    if (accepted.ok) this.connections.touch(socket);
+    if (accepted.ok) {
+      this.connections.touch(socket);
+      const sessionId = this.connections.sessionId(socket);
+      if (sessionId) this.sessions.touch(sessionId);
+    }
     return accepted.response;
   }
 
   @SubscribeMessage('activation.request')
-  activate(
+  async activate(
     @ConnectedSocket() socket: WebSocket,
     @MessageBody() message: ProtocolMessage,
   ) {
@@ -76,8 +95,14 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (!engineId)
       return this.rejected(message.message_id, ['engine.hello required']);
 
-    const result = this.licenses.activate(
+    const result = await this.licenses.activate(
       String(accepted.message.payload.activation_key),
+      {
+        engineId,
+        deviceName: String(accepted.message.payload.device_name),
+        engineVersion: String(accepted.message.payload.engine_version),
+        platform: accepted.message.payload.platform as Record<string, unknown>,
+      },
     );
     if (!result.ok || !result.activation) {
       return this.rejected(message.message_id, result.errors);
@@ -86,9 +111,17 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.connections.authorize(
       socket,
       result.activation.licenseId,
+      result.activation.engineDeviceId,
       result.activation.symbols,
       result.activation.expiresAt,
     );
+    if (result.activation.engineDeviceId) {
+      const sessionId = await this.sessions.open(
+        result.activation.engineDeviceId,
+        engineId,
+      );
+      if (sessionId) this.connections.setSessionId(socket, sessionId);
+    }
     return {
       event: 'activation.accepted',
       data: {
@@ -111,14 +144,32 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     return accepted.response;
   }
 
-  @SubscribeMessage('signal.acknowledged')
-  signalAcknowledged(@MessageBody() message: ProtocolMessage) {
-    return this.accept('signal.acknowledged', message).response;
-  }
+  @SubscribeMessage('execution.lifecycle')
+  executionLifecycle(
+    @ConnectedSocket() socket: WebSocket,
+    @MessageBody() message: ProtocolMessage,
+  ) {
+    const accepted = this.accept('execution.lifecycle', message);
+    if (!accepted.ok) return accepted.response;
 
-  @SubscribeMessage('signal.rejected')
-  signalRejected(@MessageBody() message: ProtocolMessage) {
-    return this.accept('signal.rejected', message).response;
+    const engineId = this.connections.engineId(socket);
+    const engineDeviceId = this.connections.engineDeviceId(socket);
+    if (!engineId || !engineDeviceId) {
+      return this.rejected(message.message_id, ['activation.request required']);
+    }
+    if (accepted.message.payload.engine_id !== engineId) {
+      return this.rejected(message.message_id, [
+        'engine_id does not match connection',
+      ]);
+    }
+
+    this.connections.touch(socket);
+    this.lifecycles.record(
+      engineDeviceId,
+      this.connections.sessionId(socket),
+      accepted.message.payload as unknown as ExecutionLifecycleTransition,
+    );
+    return accepted.response;
   }
 
   @SubscribeMessage('room.subscribe')
@@ -149,12 +200,12 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return this.rejected(message.message_id, authorizationErrors);
     }
 
-    this.rooms.join(
-      engineId,
-      socket,
-      symbols,
-      accepted.message.payload.ttl_seconds as number | undefined,
-    );
+    const requestedTtl = accepted.message.payload.ttl_seconds as
+      | number
+      | undefined;
+    const licenseExpiresAt = this.connections.licenseExpiresAt(socket);
+    const ttlSeconds = this.cappedTtl(requestedTtl, licenseExpiresAt);
+    this.rooms.join(engineId, socket, symbols, ttlSeconds);
     return accepted.response;
   }
 
@@ -172,6 +223,22 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     this.rooms.leave(engineId, accepted.message.payload.symbols as string[]);
     return accepted.response;
+  }
+
+  private cappedTtl(
+    requestedSeconds: number | undefined,
+    licenseExpiresAt: string | null,
+  ): number | undefined {
+    if (!licenseExpiresAt) return requestedSeconds;
+    const remainingMs = Math.max(0, Date.parse(licenseExpiresAt) - Date.now());
+    const remainingSeconds = Math.floor(remainingMs / 1000);
+    if (requestedSeconds === undefined) return remainingSeconds;
+    return Math.min(requestedSeconds, remainingSeconds);
+  }
+
+  private closeSession(socket: WebSocket, reason: string) {
+    const sessionId = this.connections.sessionId(socket);
+    if (sessionId) this.sessions.close(sessionId, reason);
   }
 
   private accept(event: string, message: ProtocolMessage) {

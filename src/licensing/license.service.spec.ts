@@ -12,19 +12,19 @@ function service(licenses: unknown[]) {
 }
 
 describe('LicenseService', () => {
-  it('returns normalized symbol entitlements for an active license', () => {
+  it('returns normalized symbol entitlements for an active license', async () => {
     const licenses = service([
       { id: 'license-001', activation_key: ACTIVE_KEY, symbols: ['xau/usd'] },
     ]);
 
-    const result = licenses.activate(ACTIVE_KEY);
+    const result = await licenses.activate(ACTIVE_KEY);
 
     expect(result.ok).toBe(true);
     expect(result.activation?.licenseId).toBe('license-001');
     expect([...result.activation!.symbols]).toEqual(['XAUUSD']);
   });
 
-  it('rejects invalid, disabled, and expired licenses', () => {
+  it('rejects invalid, disabled, and expired licenses', async () => {
     const licenses = service([
       {
         activation_key: 'disabled-license-key',
@@ -38,14 +38,14 @@ describe('LicenseService', () => {
       },
     ]);
 
-    expect(licenses.activate('unknown-license-key').errors).toEqual([
+    expect((await licenses.activate('unknown-license-key')).errors).toEqual([
       'invalid activation key',
     ]);
-    expect(licenses.activate('disabled-license-key').errors).toEqual([
+    expect((await licenses.activate('disabled-license-key')).errors).toEqual([
       'license disabled',
     ]);
-    expect(licenses.activate('expired-license-key-001').errors).toEqual([
-      'license expired',
-    ]);
+    expect((await licenses.activate('expired-license-key-001')).errors).toEqual(
+      ['license expired'],
+    );
   });
 });

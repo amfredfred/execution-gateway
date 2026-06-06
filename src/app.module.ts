@@ -6,6 +6,7 @@ import { EngineConnectionsModule } from './engine-connections/engine-connections
 import { ProtocolModule } from './protocol/protocol.module';
 import { RoomsModule } from './rooms/rooms.module';
 import { SignalEngineModule } from './signal-engine/signal-engine.module';
+import { DashboardConnectionsModule } from './dashboard-connections/dashboard-connections.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { SignalEngineModule } from './signal-engine/signal-engine.module';
     RoomsModule,
     EngineConnectionsModule,
     SignalEngineModule,
+    DashboardConnectionsModule,
   ],
   controllers: [AppController],
 })

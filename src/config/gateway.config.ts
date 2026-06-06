@@ -7,8 +7,13 @@ export default () => ({
   protocol: {
     schemaDirectory: process.env.TRADERELAY_PROTOCOL_SCHEMA_DIR,
   },
+  supabase: {
+    url: process.env.SUPABASE_URL,
+    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+  },
   licensing: {
     licensesJson: process.env.ACTIVATION_LICENSES_JSON ?? '[]',
+    activationKeyPepper: process.env.ACTIVATION_KEY_PEPPER,
   },
   connections: {
     heartbeatIntervalSeconds: Number(
