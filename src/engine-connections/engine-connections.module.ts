@@ -7,9 +7,16 @@ import { ConnectionRegistryService } from './connection-registry.service';
 import { EngineGateway } from './engine.gateway';
 import { EngineSessionService } from './engine-session.service';
 import { ExecutionLifecycleService } from './execution-lifecycle.service';
+import { DashboardConnectionsModule } from '../dashboard-connections/dashboard-connections.module';
 
 @Module({
-  imports: [ConfigModule, ProtocolModule, RoomsModule, LicensingModule],
+  imports: [
+    ConfigModule,
+    ProtocolModule,
+    RoomsModule,
+    LicensingModule,
+    DashboardConnectionsModule,
+  ],
   providers: [
     ConnectionRegistryService,
     EngineSessionService,

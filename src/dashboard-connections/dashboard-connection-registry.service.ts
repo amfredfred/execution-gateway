@@ -6,6 +6,7 @@ interface DashboardConnection {
   email: string | null;
   connectedAt: string;
   signalMetrics: boolean;
+  executionEngineId: string | null;
 }
 
 @Injectable()
@@ -13,6 +14,9 @@ export class DashboardConnectionRegistryService {
   private readonly connections = new Map<WebSocket, DashboardConnection>();
   private readonly signalMetricDemandListeners = new Set<
     (subscribers: number) => void
+  >();
+  private readonly executionMetricDemandListeners = new Set<
+    (engineId: string, subscribers: number) => void
   >();
 
   get count() {
@@ -25,6 +29,7 @@ export class DashboardConnectionRegistryService {
       email: null,
       connectedAt: new Date().toISOString(),
       signalMetrics: false,
+      executionEngineId: null,
     });
   }
 
@@ -87,14 +92,72 @@ export class DashboardConnectionRegistryService {
     return delivered;
   }
 
+  subscribeExecutionMetrics(socket: WebSocket, engineId: string) {
+    const connection = this.connections.get(socket);
+    if (!connection?.userId || connection.executionEngineId === engineId)
+      return false;
+    const previous = connection.executionEngineId;
+    connection.executionEngineId = engineId;
+    if (previous) this.emitExecutionMetricDemand(previous);
+    this.emitExecutionMetricDemand(engineId);
+    return true;
+  }
+
+  unsubscribeExecutionMetrics(socket: WebSocket) {
+    const connection = this.connections.get(socket);
+    const engineId = connection?.executionEngineId;
+    if (!connection || !engineId) return false;
+    connection.executionEngineId = null;
+    this.emitExecutionMetricDemand(engineId);
+    return true;
+  }
+
+  executionMetricSubscriberCount(engineId: string) {
+    return [...this.connections.values()].filter(
+      (connection) => connection.executionEngineId === engineId,
+    ).length;
+  }
+
+  onExecutionMetricDemandChanged(
+    listener: (engineId: string, subscribers: number) => void,
+  ) {
+    this.executionMetricDemandListeners.add(listener);
+    return () => this.executionMetricDemandListeners.delete(listener);
+  }
+
+  broadcastExecutionMetrics(engineId: string, data: unknown) {
+    const serialized = JSON.stringify({
+      event: 'execution.metrics.snapshot',
+      data: { engine_id: engineId, snapshot: data },
+    });
+    let delivered = 0;
+    for (const [socket, connection] of this.connections) {
+      if (!connection.userId || connection.executionEngineId !== engineId)
+        continue;
+      if (socket.readyState !== WebSocket.OPEN) continue;
+      socket.send(serialized);
+      delivered += 1;
+    }
+    return delivered;
+  }
+
   remove(socket: WebSocket) {
     const hadSignalMetrics = this.connections.get(socket)?.signalMetrics;
+    const executionEngineId =
+      this.connections.get(socket)?.executionEngineId ?? null;
     this.connections.delete(socket);
     if (hadSignalMetrics) this.emitSignalMetricDemand();
+    if (executionEngineId) this.emitExecutionMetricDemand(executionEngineId);
   }
 
   private emitSignalMetricDemand() {
     const count = this.signalMetricSubscriberCount;
     for (const listener of this.signalMetricDemandListeners) listener(count);
+  }
+
+  private emitExecutionMetricDemand(engineId: string) {
+    const count = this.executionMetricSubscriberCount(engineId);
+    for (const listener of this.executionMetricDemandListeners)
+      listener(engineId, count);
   }
 }

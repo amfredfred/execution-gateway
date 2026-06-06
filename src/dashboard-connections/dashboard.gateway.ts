@@ -10,9 +10,13 @@ import {
 import { WebSocket } from 'ws';
 import { DashboardAuthService } from './dashboard-auth.service';
 import { DashboardConnectionRegistryService } from './dashboard-connection-registry.service';
+import { LicenseService } from '../licensing/license.service';
 
 interface DashboardAuthMessage {
   access_token?: string;
+}
+interface ExecutionMetricsMessage {
+  engine_id?: string;
 }
 
 @WebSocketGateway({ path: '/dashboard' })
@@ -24,6 +28,7 @@ export class DashboardGateway
   constructor(
     private readonly auth: DashboardAuthService,
     private readonly connections: DashboardConnectionRegistryService,
+    private readonly licenses: LicenseService,
   ) {}
 
   handleConnection(socket: WebSocket) {
@@ -98,5 +103,33 @@ export class DashboardGateway
       event: 'signal.metrics.unsubscribed',
       data: { subscribers: this.connections.signalMetricSubscriberCount },
     };
+  }
+
+  @SubscribeMessage('execution.metrics.subscribe')
+  async subscribeExecutionMetrics(
+    @ConnectedSocket() socket: WebSocket,
+    @MessageBody() message: ExecutionMetricsMessage,
+  ) {
+    const userId = this.connections.userId(socket);
+    const engineId = String(message?.engine_id ?? '');
+    if (!userId)
+      return { event: 'dashboard.authentication_required', data: {} };
+    if (!engineId || !(await this.licenses.userOwnsEngine(userId, engineId))) {
+      return {
+        event: 'execution.metrics.forbidden',
+        data: { engine_id: engineId, reason: 'engine is not owned by user' },
+      };
+    }
+    this.connections.subscribeExecutionMetrics(socket, engineId);
+    return {
+      event: 'execution.metrics.subscribed',
+      data: { engine_id: engineId },
+    };
+  }
+
+  @SubscribeMessage('execution.metrics.unsubscribe')
+  unsubscribeExecutionMetrics(@ConnectedSocket() socket: WebSocket) {
+    this.connections.unsubscribeExecutionMetrics(socket);
+    return { event: 'execution.metrics.unsubscribed', data: {} };
   }
 }

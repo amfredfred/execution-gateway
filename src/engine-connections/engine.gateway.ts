@@ -18,6 +18,7 @@ import {
   ExecutionLifecycleService,
   type ExecutionLifecycleTransition,
 } from './execution-lifecycle.service';
+import { DashboardConnectionRegistryService } from '../dashboard-connections/dashboard-connection-registry.service';
 
 @WebSocketGateway({ path: '/engine' })
 export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -30,6 +31,7 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly licenses: LicenseService,
     private readonly sessions: EngineSessionService,
     private readonly lifecycles: ExecutionLifecycleService,
+    private readonly dashboards: DashboardConnectionRegistryService,
   ) {
     this.connections.onStale((socket, engineId, reason) => {
       if (engineId) this.rooms.leave(engineId);
@@ -170,6 +172,23 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
       accepted.message.payload as unknown as ExecutionLifecycleTransition,
     );
     return accepted.response;
+  }
+
+  @SubscribeMessage('execution.metrics.snapshot')
+  executionMetrics(
+    @ConnectedSocket() socket: WebSocket,
+    @MessageBody() message: { payload?: unknown },
+  ) {
+    const engineId = this.connections.engineId(socket);
+    if (!engineId || !this.connections.engineDeviceId(socket)) {
+      return this.rejected(undefined, ['activation.request required']);
+    }
+    this.connections.touch(socket);
+    this.dashboards.broadcastExecutionMetrics(engineId, message.payload ?? {});
+    return {
+      event: 'protocol.accepted',
+      data: { accepted_at: new Date().toISOString() },
+    };
   }
 
   @SubscribeMessage('room.subscribe')

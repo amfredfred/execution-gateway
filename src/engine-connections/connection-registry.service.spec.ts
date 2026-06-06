@@ -1,10 +1,12 @@
 import { ConfigService } from '@nestjs/config';
 import { WebSocket } from 'ws';
 import { ConnectionRegistryService } from './connection-registry.service';
+import { DashboardConnectionRegistryService } from '../dashboard-connections/dashboard-connection-registry.service';
 
 function service(offlineAfterSeconds = 90) {
   return new ConnectionRegistryService(
     new ConfigService({ connections: { offlineAfterSeconds } }),
+    new DashboardConnectionRegistryService(),
   );
 }
 

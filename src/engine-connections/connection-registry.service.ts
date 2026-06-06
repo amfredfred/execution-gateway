@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { WebSocket } from 'ws';
+import { DashboardConnectionRegistryService } from '../dashboard-connections/dashboard-connection-registry.service';
 
 interface EngineConnection {
   socket: WebSocket;
@@ -34,7 +35,14 @@ export class ConnectionRegistryService
   private readonly staleHandlers = new Set<StaleConnectionHandler>();
   private sweepTimer?: NodeJS.Timeout;
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly dashboards: DashboardConnectionRegistryService,
+  ) {
+    this.dashboards.onExecutionMetricDemandChanged((engineId, subscribers) => {
+      this.sendExecutionMetricDemand(engineId, subscribers > 0);
+    });
+  }
 
   get count() {
     return this.connections.size;
@@ -80,6 +88,12 @@ export class ConnectionRegistryService
     connection.entitledSymbols = new Set(entitledSymbols);
     connection.licenseExpiresAt = licenseExpiresAt;
     connection.lastSeenAt = new Date().toISOString();
+    if (
+      connection.engineId &&
+      this.dashboards.executionMetricSubscriberCount(connection.engineId) > 0
+    ) {
+      this.sendExecutionMetricDemand(connection.engineId, true);
+    }
   }
 
   authorizationErrors(socket: WebSocket, symbols: string[]) {
@@ -124,6 +138,21 @@ export class ConnectionRegistryService
 
   remove(socket: WebSocket) {
     this.connections.delete(socket);
+  }
+
+  private sendExecutionMetricDemand(engineId: string, subscribed: boolean) {
+    const connection = [...this.connections.values()].find(
+      (candidate) => candidate.engineId === engineId && candidate.licenseId,
+    );
+    if (!connection || connection.socket.readyState !== WebSocket.OPEN) return;
+    connection.socket.send(
+      JSON.stringify({
+        event: subscribed
+          ? 'execution.metrics.subscribe'
+          : 'execution.metrics.unsubscribe',
+        data: {},
+      }),
+    );
   }
 
   onStale(handler: StaleConnectionHandler) {

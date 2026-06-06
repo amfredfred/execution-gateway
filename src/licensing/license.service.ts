@@ -48,6 +48,24 @@ export class LicenseService {
     return this.activateConfigured(activationKey);
   }
 
+  async userOwnsEngine(userId: string, engineId: string): Promise<boolean> {
+    if (!this.supabase) return false;
+    const response = await this.supabase
+      .from('engine_devices')
+      .select('license:licenses!inner(owner_user_id)')
+      .eq('engine_id', engineId)
+      .eq('status', 'active')
+      .maybeSingle();
+    if (response.error || !response.data) return false;
+    const license = response.data.license as unknown as
+      | { owner_user_id?: string }
+      | { owner_user_id?: string }[];
+    const owner = Array.isArray(license)
+      ? license[0]?.owner_user_id
+      : license?.owner_user_id;
+    return owner === userId;
+  }
+
   private async activateWithSupabase(
     activationKey: string,
     context: LicenseActivationContext,
