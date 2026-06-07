@@ -18,6 +18,17 @@ export default () => ({
   webhooks: {
     lemonSqueezySecret: process.env.LEMON_SQUEEZY_WEBHOOK_SECRET,
   },
+  smtp: {
+    host: process.env.SMTP_HOST,
+    port: Number(process.env.SMTP_PORT ?? 587),
+    secure: process.env.SMTP_SECURE === 'true',   // true for port 465
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+    from: process.env.EMAIL_FROM ?? 'TradeRelay <noreply@traderelay.io>',
+  },
+  dashboard: {
+    url: process.env.DASHBOARD_URL ?? 'https://app.traderelay.io',
+  },
   connections: {
     heartbeatIntervalSeconds: Number(
       process.env.ENGINE_HEARTBEAT_INTERVAL_SECONDS ?? 30,

@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { createHmac, randomBytes } from 'node:crypto';
+import * as nodemailer from 'nodemailer';
 
 // ─── Lemon Squeezy event payload shapes (partial) ─────────────────────────────
 
@@ -57,17 +58,40 @@ export class WebhookService {
   private readonly supabase?: SupabaseClient;
   private readonly pepper?: string;
   private readonly webhookSecret?: string;
+  private readonly mailer?: nodemailer.Transporter;
+  private readonly emailFrom: string;
+  private readonly dashboardUrl: string;
 
   constructor(private readonly config: ConfigService) {
     const url = config.get<string>('supabase.url');
     const key = config.get<string>('supabase.serviceRoleKey');
     this.pepper = config.get<string>('licensing.activationKeyPepper');
     this.webhookSecret = config.get<string>('webhooks.lemonSqueezySecret');
+    this.emailFrom = config.get<string>('smtp.from') ?? 'TradeRelay <noreply@traderelay.io>';
+    this.dashboardUrl = config.get<string>('dashboard.url') ?? 'https://app.traderelay.io';
 
     if (url && key) {
       this.supabase = createClient(url, key, {
         auth: { persistSession: false, autoRefreshToken: false },
       });
+    }
+
+    const smtpHost = config.get<string>('smtp.host');
+    if (smtpHost) {
+      this.mailer = nodemailer.createTransport({
+        host: smtpHost,
+        port: config.get<number>('smtp.port') ?? 587,
+        secure: config.get<boolean>('smtp.secure') ?? false,
+        auth: {
+          user: config.get<string>('smtp.user'),
+          pass: config.get<string>('smtp.pass'),
+        },
+      });
+      this.logger.log(`SMTP configured: ${smtpHost}:${config.get<number>('smtp.port') ?? 587}`);
+    } else {
+      this.logger.warn(
+        'SMTP_HOST not set — activation keys will be logged to console only (dev mode)',
+      );
     }
   }
 
@@ -304,17 +328,145 @@ export class WebhookService {
     }
 
     // ── Deliver the key ──────────────────────────────────────────────────────
-    // TODO: Replace this with a real transactional email via Resend / Supabase email.
-    // The raw key MUST be delivered to the customer exactly once and never re-shown.
-    // For now, we log it prominently so it can be manually delivered during testing.
-    this.logger.warn(
+    await this.sendActivationKeyEmail(email, email.split('@')[0], raw, licenseId);
+  }
+
+  // ── Email delivery ─────────────────────────────────────────────────────────
+
+  private async sendActivationKeyEmail(
+    to: string,
+    name: string,
+    rawKey: string,
+    licenseId: string,
+  ): Promise<void> {
+    // Always log prominently so the key is never silently lost
+    this.logger.log(
       `\n${'─'.repeat(70)}\n` +
-        `  ACTIVATION KEY READY — DELIVER TO: ${email}\n` +
+        `  ACTIVATION KEY READY — DELIVER TO: ${to}\n` +
         `  License ID : ${licenseId}\n` +
-        `  Key        : ${raw}\n` +
-        `  (Wire a transactional email service here — Resend, Postmark, etc.)\n` +
+        `  Key        : ${rawKey}\n` +
         `${'─'.repeat(70)}`,
     );
+
+    if (!this.mailer) {
+      this.logger.warn(
+        'SMTP not configured — key logged above; set SMTP_HOST to enable email delivery',
+      );
+      return;
+    }
+
+    const subject = 'Your TradeRelay Activation Key';
+    const html = this.buildActivationEmail(name, rawKey, licenseId, to);
+    const text = this.buildActivationEmailText(name, rawKey, licenseId);
+
+    try {
+      const info = await this.mailer.sendMail({
+        from: this.emailFrom,
+        to,
+        subject,
+        html,
+        text,
+      });
+      this.logger.log(`Activation key email sent to ${to} — messageId: ${info.messageId}`);
+    } catch (err) {
+      // Email failure must NOT block the flow — key is already stored in Supabase.
+      // Customer can retrieve it from the dashboard; log the error for ops visibility.
+      this.logger.error(
+        `Failed to send activation key email to ${to}: ${String(err)}`,
+      );
+    }
+  }
+
+  private buildActivationEmail(
+    name: string,
+    rawKey: string,
+    licenseId: string,
+    email: string,
+  ): string {
+    const licensesUrl = `${this.dashboardUrl}/app/licenses`;
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Your TradeRelay Activation Key</title>
+</head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:40px 16px;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08);">
+
+        <!-- Header -->
+        <tr>
+          <td style="background:#0f172a;padding:24px 32px;">
+            <span style="color:#f1f5f9;font-size:20px;font-weight:700;letter-spacing:-0.02em;">TradeRelay</span>
+          </td>
+        </tr>
+
+        <!-- Body -->
+        <tr>
+          <td style="padding:32px;">
+            <h1 style="margin:0 0 8px;color:#0f172a;font-size:22px;font-weight:700;">Your activation key is ready</h1>
+            <p style="margin:0 0 24px;color:#475569;font-size:15px;line-height:1.6;">
+              Hi ${name}, thanks for your purchase. Copy the key below and paste it into your engine's
+              <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:13px;">config.yaml</code>
+              under <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:13px;">gateway.activation_key</code>.
+            </p>
+
+            <!-- Key block -->
+            <div style="background:#0f172a;border-radius:6px;padding:18px 22px;margin:0 0 24px;word-break:break-all;">
+              <code style="color:#22d3ee;font-family:'Menlo','Consolas','Courier New',monospace;font-size:14px;letter-spacing:0.04em;">${rawKey}</code>
+            </div>
+
+            <p style="margin:0 0 28px;color:#64748b;font-size:13px;line-height:1.6;">
+              ⚠️&nbsp; Keep this key private. It is shown only once and cannot be retrieved later.
+              If you lose it, you can rotate it from your dashboard.
+            </p>
+
+            <a href="${licensesUrl}"
+               style="display:inline-block;background:#3b82f6;color:#ffffff;text-decoration:none;padding:11px 22px;border-radius:6px;font-size:14px;font-weight:600;">
+              Open Dashboard &rarr;
+            </a>
+          </td>
+        </tr>
+
+        <!-- Footer -->
+        <tr>
+          <td style="padding:16px 32px;border-top:1px solid #e2e8f0;">
+            <p style="margin:0;color:#94a3b8;font-size:12px;">
+              License&nbsp;ID:&nbsp;${licenseId} &middot; Sent to ${email}
+            </p>
+          </td>
+        </tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+  }
+
+  private buildActivationEmailText(
+    name: string,
+    rawKey: string,
+    licenseId: string,
+  ): string {
+    return [
+      `Hi ${name},`,
+      '',
+      'Your TradeRelay activation key is ready.',
+      '',
+      `  ${rawKey}`,
+      '',
+      'Paste this into your engine config.yaml under gateway.activation_key.',
+      '',
+      '⚠️  Keep this key private. It is shown only once.',
+      'If you lose it, rotate it from your dashboard.',
+      '',
+      `Dashboard: ${this.dashboardUrl}/app/licenses`,
+      '',
+      `License ID: ${licenseId}`,
+    ].join('\n');
   }
 
   private futureIso(days: number): string {

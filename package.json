@@ -29,6 +29,7 @@
     "@supabase/supabase-js": "^2.107.0",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
+    "nodemailer": "^8.0.10",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "ws": "^8.21.0"
@@ -42,6 +43,7 @@
     "@types/express": "^5.0.0",
     "@types/jest": "^30.0.0",
     "@types/node": "^24.0.0",
+    "@types/nodemailer": "^8.0.0",
     "@types/supertest": "^7.0.0",
     "@types/ws": "^8.18.1",
     "eslint": "^9.18.0",
