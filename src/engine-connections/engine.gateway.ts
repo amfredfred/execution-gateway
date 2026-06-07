@@ -19,6 +19,7 @@ import {
   type ExecutionLifecycleTransition,
 } from './execution-lifecycle.service';
 import { DashboardConnectionRegistryService } from '../dashboard-connections/dashboard-connection-registry.service';
+import { RemoteCommandService } from '../commands/remote-command.service';
 
 @WebSocketGateway({ path: '/engine' })
 export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -32,6 +33,7 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly sessions: EngineSessionService,
     private readonly lifecycles: ExecutionLifecycleService,
     private readonly dashboards: DashboardConnectionRegistryService,
+    private readonly remoteCommands: RemoteCommandService,
   ) {
     this.connections.onStale((socket, engineId, reason) => {
       if (engineId) this.rooms.leave(engineId);
@@ -191,17 +193,6 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     };
   }
 
-  /**
-   * Accepts individual execution events from the engine (rejections, fills,
-   * trade lifecycle, health checks, etc.).  Events are buffered per-engine in
-   * the DashboardConnectionRegistryService and delivered to subscribed
-   * dashboards inside the next `execution.metrics.snapshot` broadcast via the
-   * `recent_events` field on the snapshot — no gateway-provider changes needed.
-   *
-   * Expected payload shape (flexible — engine may nest data or send flat):
-   *   { event_type: "strategy.rejected", data: { symbol, strategy, reason } }
-   *   { type: "order.filled",            symbol, ticket, profit }
-   */
   @SubscribeMessage('execution.event')
   executionEvent(
     @ConnectedSocket() socket: WebSocket,
@@ -217,7 +208,6 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const eventType = String(
       payload.event_type ?? payload.type ?? payload.event ?? 'unknown',
     );
-    // Accept either { event_type, data: {...} } or a flat payload
     const data: unknown =
       payload.data !== undefined ? payload.data : payload;
 
@@ -281,6 +271,76 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.rooms.leave(engineId, accepted.message.payload.symbols as string[]);
     return accepted.response;
   }
+
+  /**
+   * Engine reports a command completed successfully.
+   * Payload: { command_id, result? }
+   */
+  @SubscribeMessage('command.completed')
+  commandCompleted(
+    @ConnectedSocket() socket: WebSocket,
+    @MessageBody() message: { payload?: Record<string, unknown> },
+  ) {
+    const engineId = this.connections.engineId(socket);
+    if (!engineId || !this.connections.engineDeviceId(socket)) {
+      return this.rejected(undefined, ['activation.request required']);
+    }
+
+    const payload = message?.payload ?? {};
+    const commandId = String(payload.command_id ?? '');
+    if (!commandId) {
+      return this.rejected(undefined, ['command_id is required']);
+    }
+
+    this.connections.touch(socket);
+    void this.remoteCommands.markFinished(
+      commandId,
+      'completed',
+      (payload.result as Record<string, unknown>) ?? {},
+    );
+    this.logger.log(`Engine ${engineId}: command ${commandId} completed`);
+
+    return {
+      event: 'protocol.accepted',
+      data: { accepted_at: new Date().toISOString() },
+    };
+  }
+
+  /**
+   * Engine reports a command failed.
+   * Payload: { command_id, reason }
+   */
+  @SubscribeMessage('command.failed')
+  commandFailed(
+    @ConnectedSocket() socket: WebSocket,
+    @MessageBody() message: { payload?: Record<string, unknown> },
+  ) {
+    const engineId = this.connections.engineId(socket);
+    if (!engineId || !this.connections.engineDeviceId(socket)) {
+      return this.rejected(undefined, ['activation.request required']);
+    }
+
+    const payload = message?.payload ?? {};
+    const commandId = String(payload.command_id ?? '');
+    if (!commandId) {
+      return this.rejected(undefined, ['command_id is required']);
+    }
+
+    this.connections.touch(socket);
+    void this.remoteCommands.markFinished(commandId, 'failed', {
+      reason: String(payload.reason ?? 'engine reported failure'),
+    });
+    this.logger.warn(
+      `Engine ${engineId}: command ${commandId} failed — ${String(payload.reason ?? '')}`,
+    );
+
+    return {
+      event: 'protocol.accepted',
+      data: { accepted_at: new Date().toISOString() },
+    };
+  }
+
+  // ── private helpers ───────────────────────────────────────────────────────
 
   private cappedTtl(
     requestedSeconds: number | undefined,

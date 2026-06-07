@@ -1,51 +1,111 @@
 import { ConfigService } from '@nestjs/config';
+import { createClient } from '@supabase/supabase-js';
 import { LicenseService } from './license.service';
 
-const ACTIVE_KEY = 'active-license-key-001';
+jest.mock('@supabase/supabase-js', () => ({
+  createClient: jest.fn(),
+}));
 
-function service(licenses: unknown[]) {
+const mockRpc = jest.fn();
+const mockCreateClient = createClient as jest.Mock;
+
+const ACTIVATION_CONTEXT = {
+  engineId: 'engine-001',
+  deviceName: 'Test Machine',
+  engineVersion: '1.0.0',
+  platform: { os: 'windows' },
+};
+
+function service(rpcResult: unknown = []) {
+  mockRpc.mockResolvedValue({ data: rpcResult, error: null });
+  mockCreateClient.mockReturnValue({ rpc: mockRpc });
+
   return new LicenseService(
     new ConfigService({
-      licensing: { licensesJson: JSON.stringify(licenses) },
+      supabase: {
+        url: 'https://example.supabase.co',
+        serviceRoleKey: 'service-role-key',
+      },
+      licensing: {
+        activationKeyPepper: 'test-pepper',
+      },
     }),
   );
 }
 
 describe('LicenseService', () => {
-  it('returns normalized symbol entitlements for an active license', async () => {
-    const licenses = service([
-      { id: 'license-001', activation_key: ACTIVE_KEY, symbols: ['xau/usd'] },
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('returns normalized symbol entitlements for a valid activation', async () => {
+    const svc = service([
+      {
+        license_id: 'license-001',
+        engine_device_id: 'device-001',
+        expires_at: null,
+        symbols: ['xau/usd', 'EUR/USD'],
+      },
     ]);
 
-    const result = await licenses.activate(ACTIVE_KEY);
+    const result = await svc.activate('TR-VALIDKEY', ACTIVATION_CONTEXT);
 
     expect(result.ok).toBe(true);
     expect(result.activation?.licenseId).toBe('license-001');
-    expect([...result.activation!.symbols]).toEqual(['XAUUSD']);
+    expect(result.activation?.engineDeviceId).toBe('device-001');
+    expect([...result.activation!.symbols]).toEqual(['XAUUSD', 'EURUSD']);
   });
 
-  it('rejects invalid, disabled, and expired licenses', async () => {
-    const licenses = service([
-      {
-        activation_key: 'disabled-license-key',
-        symbols: ['XAUUSD'],
-        enabled: false,
-      },
-      {
-        activation_key: 'expired-license-key-001',
-        symbols: ['XAUUSD'],
-        expires_at: '2020-01-01T00:00:00.000Z',
-      },
-    ]);
+  it('returns an error when Supabase rejects the activation key', async () => {
+    mockRpc.mockResolvedValue({
+      data: null,
+      error: { message: 'invalid activation key' },
+    });
+    mockCreateClient.mockReturnValue({ rpc: mockRpc });
 
-    expect((await licenses.activate('unknown-license-key')).errors).toEqual([
-      'invalid activation key',
-    ]);
-    expect((await licenses.activate('disabled-license-key')).errors).toEqual([
-      'license disabled',
-    ]);
-    expect((await licenses.activate('expired-license-key-001')).errors).toEqual(
-      ['license expired'],
+    const svc = new LicenseService(
+      new ConfigService({
+        supabase: { url: 'https://example.supabase.co', serviceRoleKey: 'svc' },
+        licensing: { activationKeyPepper: 'pepper' },
+      }),
     );
+
+    const result = await svc.activate('TR-BADKEY', ACTIVATION_CONTEXT);
+
+    expect(result.ok).toBe(false);
+    expect(result.errors).toEqual(['invalid activation key']);
+  });
+
+  it('returns an error when Supabase returns no rows (key not found)', async () => {
+    const svc = service([]); // empty rows = key not found / already used
+
+    const result = await svc.activate('TR-UNKNOWN', ACTIVATION_CONTEXT);
+
+    expect(result.ok).toBe(false);
+    expect(result.errors).toEqual(['activation returned no result']);
+  });
+
+  it('returns a configuration error when Supabase is not configured', async () => {
+    mockCreateClient.mockReturnValue(undefined); // ensures no supabase instance
+    const svc = new LicenseService(
+      // no supabase config keys → this.supabase stays undefined
+      new ConfigService({
+        licensing: { activationKeyPepper: 'pepper' },
+      }),
+    );
+
+    const result = await svc.activate('TR-ANYKEY', ACTIVATION_CONTEXT);
+
+    expect(result.ok).toBe(false);
+    expect(result.errors[0]).toMatch(/not configured/);
+  });
+
+  it('returns a configuration error when activation context is omitted', async () => {
+    const svc = service([]);
+
+    const result = await svc.activate('TR-VALIDKEY');
+
+    expect(result.ok).toBe(false);
+    expect(result.errors[0]).toMatch(/context/i);
   });
 });

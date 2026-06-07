@@ -160,8 +160,7 @@ export class SignalEngineSubscriberService
       scheduler: payload.scheduler ?? [],
       active_signals: payload.active_signals ?? [],
       active_zones: payload.active_zones ?? [],
-      // Config is safe to forward — it contains strategy/symbol settings, not broker credentials
-      config: payload.config ?? null,
+      // config is intentionally excluded — it may contain private strategy settings
       api: {
         calls_last_min: api.calls_last_min,
         by_source: api.by_source,

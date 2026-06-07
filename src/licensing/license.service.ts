@@ -1,11 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import type {
   LicenseActivationContext,
   LicenseActivationResult,
-  LicenseRecord,
 } from './license.types';
 
 interface ActivationRpcRow {
@@ -18,34 +17,110 @@ interface ActivationRpcRow {
 @Injectable()
 export class LicenseService {
   private readonly logger = new Logger(LicenseService.name);
-  private readonly licenses: LicenseRecord[];
   private readonly supabase?: SupabaseClient;
   private readonly activationKeyPepper?: string;
 
   constructor(private readonly config: ConfigService) {
-    this.licenses = this.loadLicenses(
-      this.config.get<string>('licensing.licensesJson', '[]'),
-    );
     this.activationKeyPepper = this.config.get<string>(
       'licensing.activationKeyPepper',
     );
     const supabaseUrl = this.config.get<string>('supabase.url');
     const serviceRoleKey = this.config.get<string>('supabase.serviceRoleKey');
-    if (supabaseUrl && serviceRoleKey && this.activationKeyPepper) {
+    if (supabaseUrl && serviceRoleKey) {
       this.supabase = createClient(supabaseUrl, serviceRoleKey, {
         auth: { persistSession: false, autoRefreshToken: false },
       });
     }
   }
 
+  /**
+   * Activates an engine against the Supabase license store.
+   * Requires SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, and
+   * ACTIVATION_KEY_PEPPER to be set. Returns an error result if any are missing.
+   */
   async activate(
     activationKey: string,
     context?: LicenseActivationContext,
   ): Promise<LicenseActivationResult> {
-    if (this.supabase && this.activationKeyPepper && context) {
-      return this.activateWithSupabase(activationKey, context);
+    if (!this.supabase || !this.activationKeyPepper) {
+      this.logger.warn(
+        'Supabase activation attempted but gateway is not fully configured ' +
+        '(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, or ACTIVATION_KEY_PEPPER missing)',
+      );
+      return {
+        ok: false,
+        errors: ['Gateway is not configured for license activation'],
+      };
     }
-    return this.activateConfigured(activationKey);
+    if (!context) {
+      return {
+        ok: false,
+        errors: ['Activation context (engine metadata) is required'],
+      };
+    }
+    return this.activateWithSupabase(activationKey, context);
+  }
+
+  /**
+   * Generates a fresh activation key, hashes it with the pepper, stores the
+   * hash in Supabase via the `issue_activation_key` RPC, and returns the raw
+   * key. The raw key is never stored — the caller must display it once.
+   *
+   * Returns `{ raw }` on success or `{ error }` on failure.
+   */
+  async issueKey(
+    licenseId: string,
+    userId: string,
+  ): Promise<{ raw: string } | { error: string }> {
+    if (!this.supabase || !this.activationKeyPepper) {
+      return { error: 'Key issuance requires Supabase and ACTIVATION_KEY_PEPPER' };
+    }
+
+    const raw = `TR-${randomBytes(20).toString('hex').toUpperCase()}`;
+    const hash = createHmac('sha256', this.activationKeyPepper)
+      .update(raw)
+      .digest('hex');
+
+    const { error } = await this.supabase.rpc('issue_activation_key', {
+      p_license_id:    licenseId,
+      p_owner_user_id: userId,
+      p_new_key_hash:  hash,
+    });
+
+    if (error) {
+      this.logger.warn(`Key issuance failed for license ${licenseId}: ${error.message}`);
+      return { error: error.message };
+    }
+
+    this.logger.log(`Activation key issued for license ${licenseId}`);
+    return { raw };
+  }
+
+  /**
+   * Clears the activation key hash and suspends the license.
+   * No new engine activations are possible until a new key is issued.
+   * Existing engine sessions remain until the heartbeat sweep expires them.
+   */
+  async revokeKey(
+    licenseId: string,
+    userId: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    if (!this.supabase) {
+      return { ok: false, error: 'Supabase is not configured' };
+    }
+
+    const { error } = await this.supabase.rpc('revoke_license_key', {
+      p_license_id:    licenseId,
+      p_owner_user_id: userId,
+    });
+
+    if (error) {
+      this.logger.warn(`Key revocation failed for license ${licenseId}: ${error.message}`);
+      return { ok: false, error: error.message };
+    }
+
+    this.logger.log(`Activation key revoked for license ${licenseId}`);
+    return { ok: true };
   }
 
   async userOwnsEngine(userId: string, engineId: string): Promise<boolean> {
@@ -100,68 +175,6 @@ export class LicenseService {
         expiresAt: row.expires_at,
       },
     };
-  }
-
-  private activateConfigured(activationKey: string): LicenseActivationResult {
-    const record = this.licenses.find((license) =>
-      this.keysMatch(license.activation_key, activationKey),
-    );
-    if (!record) return { ok: false, errors: ['invalid activation key'] };
-    if (record.enabled === false)
-      return { ok: false, errors: ['license disabled'] };
-    if (record.expires_at && Date.parse(record.expires_at) <= Date.now()) {
-      return { ok: false, errors: ['license expired'] };
-    }
-
-    const symbols = new Set(
-      record.symbols.map((symbol) => this.normalize(symbol)),
-    );
-    if (symbols.size === 0)
-      return { ok: false, errors: ['license has no symbol entitlements'] };
-
-    return {
-      ok: true,
-      errors: [],
-      activation: {
-        licenseId: record.id ?? this.fingerprint(record.activation_key),
-        symbols,
-        expiresAt: record.expires_at ?? null,
-      },
-    };
-  }
-
-  private loadLicenses(raw: string): LicenseRecord[] {
-    try {
-      const parsed = JSON.parse(raw) as unknown;
-      if (!Array.isArray(parsed)) throw new Error('must be an array');
-      return parsed.filter(this.isLicenseRecord);
-    } catch (error) {
-      this.logger.error(`Invalid ACTIVATION_LICENSES_JSON: ${String(error)}`);
-      return [];
-    }
-  }
-
-  private readonly isLicenseRecord = (
-    value: unknown,
-  ): value is LicenseRecord => {
-    if (!value || typeof value !== 'object') return false;
-    const record = value as Partial<LicenseRecord>;
-    return (
-      typeof record.activation_key === 'string' &&
-      record.activation_key.length >= 16 &&
-      Array.isArray(record.symbols) &&
-      record.symbols.every((symbol) => typeof symbol === 'string')
-    );
-  };
-
-  private keysMatch(expected: string, received: string) {
-    const expectedHash = createHash('sha256').update(expected).digest();
-    const receivedHash = createHash('sha256').update(received).digest();
-    return timingSafeEqual(expectedHash, receivedHash);
-  }
-
-  private fingerprint(value: string) {
-    return createHash('sha256').update(value).digest('hex').slice(0, 16);
   }
 
   private normalize(symbol: string) {

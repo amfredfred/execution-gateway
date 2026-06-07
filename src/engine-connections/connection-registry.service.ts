@@ -136,6 +136,26 @@ export class ConnectionRegistryService
     if (connection) connection.lastSeenAt = new Date().toISOString();
   }
 
+  /**
+   * Sends a message to the currently connected engine with the given engineId.
+   * Returns true if the send succeeded, false if the engine is offline or the
+   * socket is not in OPEN state.
+   */
+  sendToEngine(engineId: string, event: string, data: unknown): boolean {
+    const connection = [...this.connections.values()].find(
+      (c) => c.engineId === engineId && c.licenseId,
+    );
+    if (!connection || connection.socket.readyState !== WebSocket.OPEN) {
+      return false;
+    }
+    try {
+      connection.socket.send(JSON.stringify({ event, data }));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   remove(socket: WebSocket) {
     this.connections.delete(socket);
   }

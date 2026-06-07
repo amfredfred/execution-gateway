@@ -84,7 +84,9 @@ describe('SignalEngineSubscriberService', () => {
         latency: {},
         scheduler: [],
         active_signals: [],
+        active_zones: [],
         api: {},
+        recent_events: [],
       },
     });
   });

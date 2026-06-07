@@ -2,11 +2,14 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import gatewayConfig from './config/gateway.config';
+import { DashboardConnectionsModule } from './dashboard-connections/dashboard-connections.module';
 import { EngineConnectionsModule } from './engine-connections/engine-connections.module';
+import { LicensingModule } from './licensing/licensing.module';
+import { CommandsModule } from './commands/commands.module';
+import { WebhooksModule } from './webhooks/webhooks.module';
 import { ProtocolModule } from './protocol/protocol.module';
 import { RoomsModule } from './rooms/rooms.module';
 import { SignalEngineModule } from './signal-engine/signal-engine.module';
-import { DashboardConnectionsModule } from './dashboard-connections/dashboard-connections.module';
 
 @Module({
   imports: [
@@ -16,7 +19,10 @@ import { DashboardConnectionsModule } from './dashboard-connections/dashboard-co
     }),
     ProtocolModule,
     RoomsModule,
+    LicensingModule,
     EngineConnectionsModule,
+    CommandsModule,
+    WebhooksModule,
     SignalEngineModule,
     DashboardConnectionsModule,
   ],

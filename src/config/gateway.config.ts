@@ -3,6 +3,7 @@ export default () => ({
     environment: process.env.NODE_ENV ?? 'development',
     port: Number(process.env.PORT ?? 4000),
     publicUrl: process.env.GATEWAY_PUBLIC_URL ?? 'http://localhost:4000',
+    corsOrigin: process.env.GATEWAY_CORS_ORIGIN ?? '*',
   },
   protocol: {
     schemaDirectory: process.env.TRADERELAY_PROTOCOL_SCHEMA_DIR,
@@ -12,8 +13,10 @@ export default () => ({
     serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
   },
   licensing: {
-    licensesJson: process.env.ACTIVATION_LICENSES_JSON ?? '[]',
     activationKeyPepper: process.env.ACTIVATION_KEY_PEPPER,
+  },
+  webhooks: {
+    lemonSqueezySecret: process.env.LEMON_SQUEEZY_WEBHOOK_SECRET,
   },
   connections: {
     heartbeatIntervalSeconds: Number(
