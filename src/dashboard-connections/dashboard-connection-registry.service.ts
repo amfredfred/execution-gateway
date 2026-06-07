@@ -1,6 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { WebSocket } from 'ws';
 
+export interface ExecutionEventEntry {
+  id: string;
+  event_type: string;
+  ts: string;
+  summary: string;
+  data: unknown;
+}
+
 interface DashboardConnection {
   userId: string | null;
   email: string | null;
@@ -12,6 +20,8 @@ interface DashboardConnection {
 @Injectable()
 export class DashboardConnectionRegistryService {
   private readonly connections = new Map<WebSocket, DashboardConnection>();
+  private readonly eventBuffers = new Map<string, ExecutionEventEntry[]>();
+  private readonly signalEventBuffer: ExecutionEventEntry[] = [];
   private readonly signalMetricDemandListeners = new Set<
     (subscribers: number) => void
   >();
@@ -77,10 +87,31 @@ export class DashboardConnectionRegistryService {
     return () => this.signalMetricDemandListeners.delete(listener);
   }
 
+  pushSignalEvent(eventType: string, data: unknown): ExecutionEventEntry {
+    const entry: ExecutionEventEntry = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      event_type: eventType,
+      ts: new Date().toISOString(),
+      summary: this.summariseEvent(eventType, data),
+      data,
+    };
+    this.signalEventBuffer.unshift(entry);
+    if (this.signalEventBuffer.length > 200) this.signalEventBuffer.length = 200;
+    return entry;
+  }
+
   broadcastSignalMetrics(data: unknown) {
+    const enriched =
+      typeof data === 'object' && data !== null
+        ? {
+            ...(data as Record<string, unknown>),
+            recent_events: this.signalEventBuffer,
+          }
+        : { recent_events: this.signalEventBuffer };
+
     const serialized = JSON.stringify({
       event: 'signal.metrics.snapshot',
-      data,
+      data: enriched,
     });
     let delivered = 0;
     for (const [socket, connection] of this.connections) {
@@ -125,10 +156,35 @@ export class DashboardConnectionRegistryService {
     return () => this.executionMetricDemandListeners.delete(listener);
   }
 
+  pushEngineEvent(
+    engineId: string,
+    eventType: string,
+    data: unknown,
+  ): ExecutionEventEntry {
+    const entry: ExecutionEventEntry = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      event_type: eventType,
+      ts: new Date().toISOString(),
+      summary: this.summariseEvent(eventType, data),
+      data,
+    };
+    const buf = this.eventBuffers.get(engineId) ?? [];
+    buf.unshift(entry);
+    if (buf.length > 200) buf.length = 200;
+    this.eventBuffers.set(engineId, buf);
+    return entry;
+  }
+
   broadcastExecutionMetrics(engineId: string, data: unknown) {
+    const events = this.eventBuffers.get(engineId) ?? [];
+    const snapshotWithEvents =
+      typeof data === 'object' && data !== null
+        ? { ...(data as Record<string, unknown>), recent_events: events }
+        : { recent_events: events };
+
     const serialized = JSON.stringify({
       event: 'execution.metrics.snapshot',
-      data: { engine_id: engineId, snapshot: data },
+      data: { engine_id: engineId, snapshot: snapshotWithEvents },
     });
     let delivered = 0;
     for (const [socket, connection] of this.connections) {
@@ -148,6 +204,18 @@ export class DashboardConnectionRegistryService {
     this.connections.delete(socket);
     if (hadSignalMetrics) this.emitSignalMetricDemand();
     if (executionEngineId) this.emitExecutionMetricDemand(executionEngineId);
+  }
+
+  private summariseEvent(type: string, data: unknown): string {
+    if (!data || typeof data !== 'object') return type;
+    const p = data as Record<string, unknown>;
+    const parts: string[] = [];
+    if (p.symbol) parts.push(String(p.symbol));
+    if (p.strategy) parts.push(`strategy=${String(p.strategy)}`);
+    if (p.reason) parts.push(String(p.reason));
+    if (p.message) parts.push(String(p.message));
+    if (p.ticket) parts.push(`#${String(p.ticket)}`);
+    return parts.length ? parts.join(' · ') : type;
   }
 
   private emitSignalMetricDemand() {

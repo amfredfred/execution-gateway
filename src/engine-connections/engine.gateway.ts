@@ -191,6 +191,44 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     };
   }
 
+  /**
+   * Accepts individual execution events from the engine (rejections, fills,
+   * trade lifecycle, health checks, etc.).  Events are buffered per-engine in
+   * the DashboardConnectionRegistryService and delivered to subscribed
+   * dashboards inside the next `execution.metrics.snapshot` broadcast via the
+   * `recent_events` field on the snapshot — no gateway-provider changes needed.
+   *
+   * Expected payload shape (flexible — engine may nest data or send flat):
+   *   { event_type: "strategy.rejected", data: { symbol, strategy, reason } }
+   *   { type: "order.filled",            symbol, ticket, profit }
+   */
+  @SubscribeMessage('execution.event')
+  executionEvent(
+    @ConnectedSocket() socket: WebSocket,
+    @MessageBody() message: { payload?: unknown },
+  ) {
+    const engineId = this.connections.engineId(socket);
+    if (!engineId || !this.connections.engineDeviceId(socket)) {
+      return this.rejected(undefined, ['activation.request required']);
+    }
+    this.connections.touch(socket);
+
+    const payload = (message?.payload ?? {}) as Record<string, unknown>;
+    const eventType = String(
+      payload.event_type ?? payload.type ?? payload.event ?? 'unknown',
+    );
+    // Accept either { event_type, data: {...} } or a flat payload
+    const data: unknown =
+      payload.data !== undefined ? payload.data : payload;
+
+    this.dashboards.pushEngineEvent(engineId, eventType, data);
+
+    return {
+      event: 'protocol.accepted',
+      data: { accepted_at: new Date().toISOString() },
+    };
+  }
+
   @SubscribeMessage('room.subscribe')
   subscribe(
     @ConnectedSocket() socket: WebSocket,

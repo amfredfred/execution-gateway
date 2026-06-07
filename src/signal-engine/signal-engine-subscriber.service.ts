@@ -91,7 +91,10 @@ export class SignalEngineSubscriberService
       return;
     }
 
-    if (message.event === 'metrics.snapshot' && message.payload) {
+    const event = String(message.event ?? '');
+
+    // Metrics snapshot → enrich with buffered events and broadcast to dashboards
+    if (event === 'metrics.snapshot' && message.payload) {
       const delivered = this.dashboards.broadcastSignalMetrics(
         this.sanitizeMetrics(message.payload),
       );
@@ -101,12 +104,24 @@ export class SignalEngineSubscriberService
       return;
     }
 
-    if (message.event !== 'signal.triggered' || !message.payload?.symbol)
-      return;
-    const delivered = this.rooms.broadcast(message.payload.symbol, serialized);
-    this.logger.debug(
-      `Delivered ${message.payload.symbol} signal to ${delivered} engine(s)`,
-    );
+    // signal.triggered → forward raw message to subscribed execution engine rooms
+    if (event === 'signal.triggered' && message.payload?.symbol) {
+      const delivered = this.rooms.broadcast(
+        message.payload.symbol,
+        serialized,
+      );
+      this.logger.debug(
+        `Delivered ${message.payload.symbol} signal to ${delivered} engine(s)`,
+      );
+      // fall through — also buffer for the dashboard event log
+    }
+
+    // Buffer every non-metrics event so dashboards can display signal feeds,
+    // rejections, and operational logs.  Events ride in the next metrics
+    // broadcast via recent_events — no extra WS message type needed.
+    if (event) {
+      this.dashboards.pushSignalEvent(event, message.payload ?? {});
+    }
   }
 
   private syncMetricSubscription() {
@@ -134,6 +149,9 @@ export class SignalEngineSubscriberService
       latency: payload.latency ?? {},
       scheduler: payload.scheduler ?? [],
       active_signals: payload.active_signals ?? [],
+      active_zones: payload.active_zones ?? [],
+      // Config is safe to forward — it contains strategy/symbol settings, not broker credentials
+      config: payload.config ?? null,
       api: {
         calls_last_min: api.calls_last_min,
         by_source: api.by_source,
