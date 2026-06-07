@@ -3,6 +3,8 @@ export interface LicenseActivation {
   engineDeviceId?: string;
   symbols: ReadonlySet<string>;
   expiresAt: string | null;
+  /** Plaintext device credential — present only immediately after issuance. Never stored. */
+  deviceCredential?: string;
 }
 
 export interface LicenseActivationResult {

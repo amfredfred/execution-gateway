@@ -59,17 +59,67 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('engine.hello')
-  hello(
+  async hello(
     @ConnectedSocket() socket: WebSocket,
     @MessageBody() message: ProtocolMessage,
   ) {
     const accepted = this.accept('engine.hello', message);
     if (!accepted.ok) return accepted.response;
 
-    this.connections.identify(
-      socket,
-      String(accepted.message.payload.engine_id),
-    );
+    const engineId = String(accepted.message.payload.engine_id);
+    this.connections.identify(socket, engineId);
+
+    // 1.16 — Fast-path: if engine presents a device credential, verify it and
+    // skip the activation.request round-trip entirely.
+    const credential = accepted.message.payload.device_credential as
+      | string
+      | undefined;
+    if (credential) {
+      const result = await this.licenses.verifyDeviceCredential(
+        engineId,
+        credential,
+      );
+      if (result?.ok && result.activation) {
+        this.connections.authorize(
+          socket,
+          result.activation.licenseId,
+          result.activation.engineDeviceId,
+          result.activation.symbols,
+          result.activation.expiresAt,
+        );
+        if (result.activation.engineDeviceId) {
+          const sessionId = await this.sessions.open(
+            result.activation.engineDeviceId,
+            engineId,
+          );
+          if (sessionId) this.connections.setSessionId(socket, sessionId);
+        }
+        // Rotate the credential on every successful fast-path activation
+        const rawCred = result.activation.engineDeviceId
+          ? await this.licenses.issueDeviceCredential(
+              result.activation.engineDeviceId,
+            )
+          : null;
+        this.logger.log(`Engine ${engineId}: fast-path credential activation`);
+        return {
+          event: 'activation.accepted',
+          data: {
+            message_id: message.message_id,
+            engine_id: engineId,
+            symbols: [...result.activation.symbols],
+            expires_at: result.activation.expiresAt,
+            accepted_at: new Date().toISOString(),
+            ...(rawCred ? { device_credential: rawCred } : {}),
+          },
+        };
+      }
+      // Credential invalid or expired — fall through to normal protocol.accepted
+      // so the engine falls back to activation.request with its activation key.
+      this.logger.warn(
+        `Engine ${engineId}: credential verification failed, requiring full activation`,
+      );
+    }
+
     return accepted.response;
   }
 
@@ -126,6 +176,10 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
       );
       if (sessionId) this.connections.setSessionId(socket, sessionId);
     }
+    // 1.16 — Issue a device credential so the engine can fast-path reconnect
+    const rawCred = result.activation.engineDeviceId
+      ? await this.licenses.issueDeviceCredential(result.activation.engineDeviceId)
+      : null;
     return {
       event: 'activation.accepted',
       data: {
@@ -134,6 +188,7 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
         symbols: [...result.activation.symbols],
         expires_at: result.activation.expiresAt,
         accepted_at: new Date().toISOString(),
+        ...(rawCred ? { device_credential: rawCred } : {}),
       },
     };
   }

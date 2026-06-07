@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type {
   LicenseActivationContext,
   LicenseActivationResult,
@@ -121,6 +121,125 @@ export class LicenseService {
 
     this.logger.log(`Activation key revoked for license ${licenseId}`);
     return { ok: true };
+  }
+
+  /**
+   * Generates a device-bound credential (TRDC-<64 hex>), stores its
+   * HMAC-SHA256 hash in `engine_devices.credential_hash`, and returns the
+   * plaintext.  Returns null on any failure — callers should proceed without
+   * the credential rather than blocking activation.
+   *
+   * 1.16 — called after every successful activation (full or fast-path) so the
+   * engine always holds a fresh rotated credential.
+   */
+  async issueDeviceCredential(engineDeviceId: string): Promise<string | null> {
+    if (!this.supabase || !this.activationKeyPepper) return null;
+
+    const raw = `TRDC-${randomBytes(32).toString('hex').toUpperCase()}`;
+    const hash = createHmac('sha256', this.activationKeyPepper)
+      .update(raw)
+      .digest('hex');
+
+    const { error } = await this.supabase
+      .from('engine_devices')
+      .update({ credential_hash: hash, updated_at: new Date().toISOString() })
+      .eq('id', engineDeviceId);
+
+    if (error) {
+      this.logger.warn(
+        `Credential issuance failed for device ${engineDeviceId}: ${error.message}`,
+      );
+      return null;
+    }
+
+    this.logger.log(`Device credential issued for ${engineDeviceId}`);
+    return raw;
+  }
+
+  /**
+   * Verifies a device credential presented in `engine.hello`.
+   * Queries `engine_devices`, checks the HMAC-SHA256 hash in constant time,
+   * validates the license is still active and not expired, then returns the
+   * full activation result so the caller can fast-path authorize the socket.
+   *
+   * Returns null on any verification failure (bad credential, expired license,
+   * Supabase error).  Never throws.
+   *
+   * 1.16 — fast-path reconnect: avoids the full activation.request round-trip.
+   */
+  async verifyDeviceCredential(
+    engineId: string,
+    credential: string,
+  ): Promise<LicenseActivationResult | null> {
+    if (!this.supabase || !this.activationKeyPepper) return null;
+
+    try {
+      const resp = await this.supabase
+        .from('engine_devices')
+        .select(`
+          id,
+          credential_hash,
+          license:licenses!inner(
+            id,
+            status,
+            expires_at,
+            entitlements:license_symbol_entitlements(symbol)
+          )
+        `)
+        .eq('engine_id', engineId)
+        .eq('status', 'active')
+        .maybeSingle();
+
+      if (resp.error || !resp.data) return null;
+
+      const device = resp.data as unknown as {
+        id: string;
+        credential_hash: string | null;
+        license: {
+          id: string;
+          status: string;
+          expires_at: string | null;
+          entitlements: { symbol: string }[];
+        };
+      };
+
+      if (!device.credential_hash) return null;
+
+      // License must be active and not expired
+      const lic = device.license;
+      if (lic.status !== 'active') return null;
+      if (lic.expires_at && Date.parse(lic.expires_at) <= Date.now()) return null;
+
+      // Constant-time HMAC comparison
+      const expected = createHmac('sha256', this.activationKeyPepper!)
+        .update(credential)
+        .digest();
+      const stored = Buffer.from(device.credential_hash, 'hex');
+
+      if (expected.length !== stored.length || !timingSafeEqual(expected, stored)) {
+        return null;
+      }
+
+      const symbols = new Set(
+        lic.entitlements.map((e) => this.normalize(e.symbol)),
+      );
+
+      return {
+        ok: true,
+        errors: [],
+        activation: {
+          licenseId: lic.id,
+          engineDeviceId: device.id,
+          symbols,
+          expiresAt: lic.expires_at,
+        },
+      };
+    } catch (err) {
+      this.logger.warn(
+        `Credential verification error for engine ${engineId}: ${String(err)}`,
+      );
+      return null;
+    }
   }
 
   async userOwnsEngine(userId: string, engineId: string): Promise<boolean> {
