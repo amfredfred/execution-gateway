@@ -117,8 +117,14 @@ export class DashboardConnectionRegistryService {
     for (const [socket, connection] of this.connections) {
       if (!connection.userId || !connection.signalMetrics) continue;
       if (socket.readyState !== WebSocket.OPEN) continue;
-      socket.send(serialized);
-      delivered += 1;
+      try {
+        socket.send(serialized);
+        delivered += 1;
+      } catch {
+        // Socket closed mid-send (CLOSING race) — evict so next broadcast
+        // skips it; the ws 'close' event will call handleDisconnect normally.
+        this.connections.delete(socket);
+      }
     }
     return delivered;
   }
@@ -191,8 +197,14 @@ export class DashboardConnectionRegistryService {
       if (!connection.userId || connection.executionEngineId !== engineId)
         continue;
       if (socket.readyState !== WebSocket.OPEN) continue;
-      socket.send(serialized);
-      delivered += 1;
+      try {
+        socket.send(serialized);
+        delivered += 1;
+      } catch {
+        // Socket closed mid-send (CLOSING race) — evict so next broadcast
+        // skips it; the ws 'close' event will call handleDisconnect normally.
+        this.connections.delete(socket);
+      }
     }
     return delivered;
   }

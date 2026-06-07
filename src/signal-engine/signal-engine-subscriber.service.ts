@@ -83,44 +83,54 @@ export class SignalEngineSubscriberService
   }
 
   private handleMessage(raw: RawData) {
-    const serialized = this.rawToString(raw);
-    let message: SignalEngineMessage;
+    // Outer try/catch: a bad message payload or a CLOSING-race send() inside
+    // broadcastSignalMetrics must never escape as an uncaught exception and
+    // crash the gateway process (raw ws 'message' events are not wrapped by
+    // NestJS, so any throw here becomes an unhandled Node.js error).
     try {
-      message = JSON.parse(serialized) as SignalEngineMessage;
-    } catch {
-      return;
-    }
+      const serialized = this.rawToString(raw);
+      let message: SignalEngineMessage;
+      try {
+        message = JSON.parse(serialized) as SignalEngineMessage;
+      } catch {
+        return;
+      }
 
-    const event = String(message.event ?? '');
+      const event = String(message.event ?? '');
 
-    // Metrics snapshot → enrich with buffered events and broadcast to dashboards
-    if (event === 'metrics.snapshot' && message.payload) {
-      const delivered = this.dashboards.broadcastSignalMetrics(
-        this.sanitizeMetrics(message.payload),
-      );
-      this.logger.debug(
-        `Delivered signal metrics to ${delivered} dashboard(s)`,
-      );
-      return;
-    }
+      // Metrics snapshot → enrich with buffered events and broadcast to dashboards
+      if (event === 'metrics.snapshot' && message.payload) {
+        const delivered = this.dashboards.broadcastSignalMetrics(
+          this.sanitizeMetrics(message.payload),
+        );
+        this.logger.debug(
+          `Delivered signal metrics to ${delivered} dashboard(s)`,
+        );
+        return;
+      }
 
-    // signal.triggered → forward raw message to subscribed execution engine rooms
-    if (event === 'signal.triggered' && message.payload?.symbol) {
-      const delivered = this.rooms.broadcast(
-        message.payload.symbol,
-        serialized,
-      );
-      this.logger.debug(
-        `Delivered ${message.payload.symbol} signal to ${delivered} engine(s)`,
-      );
-      // fall through — also buffer for the dashboard event log
-    }
+      // signal.triggered → forward raw message to subscribed execution engine rooms
+      if (event === 'signal.triggered' && message.payload?.symbol) {
+        const delivered = this.rooms.broadcast(
+          message.payload.symbol,
+          serialized,
+        );
+        this.logger.debug(
+          `Delivered ${message.payload.symbol} signal to ${delivered} engine(s)`,
+        );
+        // fall through — also buffer for the dashboard event log
+      }
 
-    // Buffer every non-metrics event so dashboards can display signal feeds,
-    // rejections, and operational logs.  Events ride in the next metrics
-    // broadcast via recent_events — no extra WS message type needed.
-    if (event) {
-      this.dashboards.pushSignalEvent(event, message.payload ?? {});
+      // Buffer every non-metrics event so dashboards can display signal feeds,
+      // rejections, and operational logs.  Events ride in the next metrics
+      // broadcast via recent_events — no extra WS message type needed.
+      if (event) {
+        this.dashboards.pushSignalEvent(event, message.payload ?? {});
+      }
+    } catch (err) {
+      this.logger.error(
+        `Unhandled error in signal-engine message handler: ${String(err)}`,
+      );
     }
   }
 
@@ -192,7 +202,14 @@ export class SignalEngineSubscriberService
     );
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = undefined;
-      this.connect();
+      try {
+        this.connect();
+      } catch (err) {
+        // new WebSocket() can throw for a malformed URL — log and schedule
+        // another attempt rather than letting the process crash.
+        this.logger.error(`Signal Engine reconnect failed: ${String(err)}`);
+        this.scheduleReconnect();
+      }
     }, delay);
     this.reconnectTimer.unref();
   }
