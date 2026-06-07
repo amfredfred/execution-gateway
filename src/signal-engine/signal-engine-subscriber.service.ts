@@ -133,6 +133,7 @@ export class SignalEngineSubscriberService
       metrics: payload.metrics ?? {},
       latency: payload.latency ?? {},
       scheduler: payload.scheduler ?? [],
+      active_signals: payload.active_signals ?? [],
       api: {
         calls_last_min: api.calls_last_min,
         by_source: api.by_source,

@@ -83,6 +83,7 @@ describe('SignalEngineSubscriberService', () => {
         metrics: { scanner_ticks: 9 },
         latency: {},
         scheduler: [],
+        active_signals: [],
         api: {},
       },
     });
