@@ -24,7 +24,7 @@ describe('AppController (e2e)', () => {
       .expect(200)
       .expect((response) => {
         expect(response.body).toMatchObject({
-          service: 'traderelay-execution-gateway',
+          service: 'apexquanttrader-execution-gateway',
           status: 'ok',
           protocol_versions: ['1.0'],
           connected_engines: 0,

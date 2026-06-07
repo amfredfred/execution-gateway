@@ -6,7 +6,7 @@ export default () => ({
     corsOrigin: process.env.GATEWAY_CORS_ORIGIN ?? '*',
   },
   protocol: {
-    schemaDirectory: process.env.TRADERELAY_PROTOCOL_SCHEMA_DIR,
+    schemaDirectory: process.env.APEX_PROTOCOL_SCHEMA_DIR,
   },
   supabase: {
     url: process.env.SUPABASE_URL,
@@ -24,10 +24,10 @@ export default () => ({
     secure: process.env.SMTP_SECURE === 'true',   // true for port 465
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
-    from: process.env.EMAIL_FROM ?? 'TradeRelay <noreply@traderelay.io>',
+    from: process.env.EMAIL_FROM ?? 'Apex Quant Trader <noreply@apexquanttrader.io>',
   },
   dashboard: {
-    url: process.env.DASHBOARD_URL ?? 'https://app.traderelay.io',
+    url: process.env.DASHBOARD_URL ?? 'https://app.apexquanttrader.io',
   },
   connections: {
     heartbeatIntervalSeconds: Number(

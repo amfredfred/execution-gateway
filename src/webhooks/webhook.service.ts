@@ -67,8 +67,8 @@ export class WebhookService {
     const key = config.get<string>('supabase.serviceRoleKey');
     this.pepper = config.get<string>('licensing.activationKeyPepper');
     this.webhookSecret = config.get<string>('webhooks.lemonSqueezySecret');
-    this.emailFrom = config.get<string>('smtp.from') ?? 'TradeRelay <noreply@traderelay.io>';
-    this.dashboardUrl = config.get<string>('dashboard.url') ?? 'https://app.traderelay.io';
+    this.emailFrom = config.get<string>('smtp.from') ?? 'Apex Quant Trader <noreply@apexquanttrader.io>';
+    this.dashboardUrl = config.get<string>('dashboard.url') ?? 'https://app.apexquanttrader.io';
 
     if (url && key) {
       this.supabase = createClient(url, key, {
@@ -355,7 +355,7 @@ export class WebhookService {
       return;
     }
 
-    const subject = 'Your TradeRelay Activation Key';
+    const subject = 'Your Apex Quant Trader Activation Key';
     const html = this.buildActivationEmail(name, rawKey, licenseId, to);
     const text = this.buildActivationEmailText(name, rawKey, licenseId);
 
@@ -389,7 +389,7 @@ export class WebhookService {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Your TradeRelay Activation Key</title>
+  <title>Your Apex Quant Trader Activation Key</title>
 </head>
 <body style="margin:0;padding:0;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:40px 16px;">
@@ -399,7 +399,7 @@ export class WebhookService {
         <!-- Header -->
         <tr>
           <td style="background:#0f172a;padding:24px 32px;">
-            <span style="color:#f1f5f9;font-size:20px;font-weight:700;letter-spacing:-0.02em;">TradeRelay</span>
+            <span style="color:#f1f5f9;font-size:20px;font-weight:700;letter-spacing:-0.02em;">Apex Quant Trader</span>
           </td>
         </tr>
 
@@ -454,7 +454,7 @@ export class WebhookService {
     return [
       `Hi ${name},`,
       '',
-      'Your TradeRelay activation key is ready.',
+      'Your Apex Quant Trader activation key is ready.',
       '',
       `  ${rawKey}`,
       '',

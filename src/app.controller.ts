@@ -14,7 +14,7 @@ export class AppController {
   @Get('health')
   health() {
     return {
-      service: 'traderelay-execution-gateway',
+      service: 'apexquanttrader-execution-gateway',
       status: 'ok',
       protocol_versions: this.protocol.supportedVersions,
       connected_engines: this.connections.count,
@@ -32,7 +32,7 @@ export class AppController {
    *
    * Configure via environment variables:
    *   ENGINE_LATEST_VERSION   — semver string, e.g. "0.2.0"
-   *   ENGINE_DOWNLOAD_URL     — full URL to TradeRelay-Engine-<ver>.zip
+   *   ENGINE_DOWNLOAD_URL     — full URL to apex-quant-trader-agent-<ver>.zip
    *   ENGINE_DOWNLOAD_SHA256  — hex SHA-256 of the zip (optional but recommended)
    */
   @Get('engine-version')
