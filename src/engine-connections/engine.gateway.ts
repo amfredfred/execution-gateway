@@ -97,8 +97,8 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
         // Rotate the credential on every successful fast-path activation
         const rawCred = result.activation.engineDeviceId
           ? await this.licenses.issueDeviceCredential(
-              result.activation.engineDeviceId,
-            )
+            result.activation.engineDeviceId,
+          )
           : null;
         this.logger.log(`Engine ${engineId}: fast-path credential activation`);
         return {
