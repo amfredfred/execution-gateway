@@ -11,6 +11,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
 import { ProtocolModule } from './protocol/protocol.module';
 import { RoomsModule } from './rooms/rooms.module';
 import { SignalEngineModule } from './signal-engine/signal-engine.module';
+import { BillingModule } from './billing/billing.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { SignalEngineModule } from './signal-engine/signal-engine.module';
     WebhooksModule,
     SignalEngineModule,
     DashboardConnectionsModule,
+    BillingModule,
   ],
   controllers: [AppController],
 })

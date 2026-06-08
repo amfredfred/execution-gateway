@@ -65,10 +65,14 @@ export class WebhookController {
       );
     }
 
-    const bodyForVerification = rawBody ?? Buffer.from(JSON.stringify(body));
-    const sig = signature ?? '';
+    if (!signature) {
+      this.logger.warn('Lemon Squeezy webhook: missing X-Signature header');
+      throw new BadRequestException('Missing webhook signature');
+    }
 
-    if (!this.webhooks.verifySignature(bodyForVerification, sig)) {
+    const bodyForVerification = rawBody ?? Buffer.from(JSON.stringify(body));
+
+    if (!this.webhooks.verifySignature(bodyForVerification, signature)) {
       this.logger.warn('Lemon Squeezy webhook: signature verification failed');
       throw new BadRequestException('Invalid webhook signature');
     }

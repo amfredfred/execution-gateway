@@ -28,7 +28,9 @@ interface LsOrderAttributes {
 interface LsSubscriptionAttributes {
   status: string;
   customer_email: string;
+  user_name?: string;
   user_email?: string;
+  variant_id?: number;
   ends_at?: string | null;
   renews_at?: string | null;
   trial_ends_at?: string | null;
@@ -51,6 +53,30 @@ interface LsWebhookPayload {
 
 const DEFAULT_LICENSE_DAYS = 30;
 const DEFAULT_MAX_DEVICES = 3;
+
+// ─── Lemon Squeezy variant → plan config ──────────────────────────────────────
+// Set NEXT_PUBLIC_LS_VARIANT_STARTER, _PRO, _INFRASTRUCTURE in the gateway env
+// to match the variant IDs from your Lemon Squeezy dashboard.
+// Falls back to DEFAULT_MAX_DEVICES (3) for any unrecognised variant.
+interface PlanConfig { maxDevices: number; days: number }
+
+function planConfigFromVariant(
+  variantId: number | undefined,
+  config: import('@nestjs/config').ConfigService,
+): PlanConfig {
+  if (variantId === undefined) return { maxDevices: DEFAULT_MAX_DEVICES, days: DEFAULT_LICENSE_DAYS };
+
+  const v = Number(variantId);
+  const get = (key: string) => { const n = config.get<number>(key); return n ? Number(n) : undefined; };
+
+  if (get('licensing.variantStarterMonthly') === v) return { maxDevices: 1,    days: 30  };
+  if (get('licensing.variantStarterYearly')  === v) return { maxDevices: 5,    days: 365 };
+  if (get('licensing.variantProMonthly')     === v) return { maxDevices: 3,    days: 30  };
+  if (get('licensing.variantProYearly')      === v) return { maxDevices: 10,   days: 365 };
+  if (get('licensing.variantInfrastructure') === v) return { maxDevices: 9999, days: 365 };
+
+  return { maxDevices: DEFAULT_MAX_DEVICES, days: DEFAULT_LICENSE_DAYS };
+}
 
 @Injectable()
 export class WebhookService {
@@ -130,6 +156,9 @@ export class WebhookService {
       case 'order_created':
         await this.handleOrderCreated(payload);
         break;
+      case 'subscription_created':
+        await this.handleSubscriptionCreated(payload);
+        break;
       case 'subscription_payment_success':
         await this.handleSubscriptionRenewed(payload);
         break;
@@ -158,17 +187,65 @@ export class WebhookService {
     }
 
     const orderId = payload.data.id;
-    const expiresAt = this.futureIso(DEFAULT_LICENSE_DAYS);
+    const plan    = planConfigFromVariant(attrs.first_order_item?.variant_id, this.config);
+    const expiresAt = this.futureIso(plan.days);
 
     // Resolve or create Supabase user
     const userId = await this.resolveOrCreateUser(email, attrs.customer_name);
     if (!userId) return;
 
     // Insert license row
-    const licenseId = await this.createLicense(userId, expiresAt, orderId);
+    const licenseId = await this.createLicense(userId, expiresAt, orderId, plan.maxDevices);
     if (!licenseId) return;
 
     // Issue activation key and deliver
+    await this.issueAndDeliverKey(licenseId, userId, email);
+  }
+
+  // ── Subscription created → new license ────────────────────────────────────
+  // Fired when a customer starts a new subscription (distinct from order_created
+  // which fires for one-time purchases). Both flows provision a license + key.
+
+  private async handleSubscriptionCreated(payload: LsWebhookPayload): Promise<void> {
+    if (!this.supabase) {
+      this.logger.error('Supabase not configured — cannot create license from subscription');
+      return;
+    }
+
+    const attrs  = payload.data.attributes as LsSubscriptionAttributes;
+    const email  = attrs.customer_email || attrs.user_email;
+    if (!email) {
+      this.logger.error('subscription_created: no customer email in payload');
+      return;
+    }
+
+    const plan      = planConfigFromVariant(attrs.variant_id, this.config);
+    const expiresAt = attrs.renews_at
+      ? new Date(new Date(attrs.renews_at).getTime() + plan.days * 86_400_000).toISOString()
+      : this.futureIso(plan.days);
+
+    const userId = await this.resolveOrCreateUser(email, attrs.user_name);
+    if (!userId) return;
+
+    // Guard: skip if this user already has an active license (e.g. order_created
+    // already ran for the same purchase).
+    const { data: existing } = await this.supabase
+      .from('licenses')
+      .select('id')
+      .eq('owner_user_id', userId)
+      .eq('status', 'active')
+      .limit(1);
+
+    if (existing && existing.length > 0) {
+      this.logger.log(
+        `subscription_created: user ${email} already has an active license — skipping duplicate provision`,
+      );
+      return;
+    }
+
+    const licenseId = await this.createLicense(userId, expiresAt, payload.data.id, plan.maxDevices);
+    if (!licenseId) return;
+
     await this.issueAndDeliverKey(licenseId, userId, email);
   }
 
@@ -263,16 +340,18 @@ export class WebhookService {
   }
 
   private async resolveUserId(email: string): Promise<string | null> {
-    const { data, error } = await this.supabase!.auth.admin.listUsers();
+    // supabase-js v2 PageParams type omits `filter`, but GoTrue admin API supports it.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await this.supabase!.auth.admin.listUsers({ filter: `email.eq.${email}` } as any);
     if (error || !data) return null;
-    const user = data.users.find((u) => u.email === email);
-    return user?.id ?? null;
+    return data.users[0]?.id ?? null;
   }
 
   private async createLicense(
     ownerUserId: string,
     expiresAt: string,
     orderId: string,
+    maxDevices: number = DEFAULT_MAX_DEVICES,
   ): Promise<string | null> {
     const { data, error } = await this.supabase!
       .from('licenses')
@@ -280,7 +359,7 @@ export class WebhookService {
         owner_user_id: ownerUserId,
         activation_key_hash: '', // will be set by issueKey
         status: 'pending',
-        max_devices: DEFAULT_MAX_DEVICES,
+        max_devices: maxDevices,
         expires_at: expiresAt,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
