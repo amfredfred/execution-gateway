@@ -181,6 +181,22 @@ export class DashboardConnectionRegistryService {
     return entry;
   }
 
+  broadcastEngineOffline(engineId: string): void {
+    const serialized = JSON.stringify({
+      event: 'engine.offline',
+      data: { engine_id: engineId, offline_at: new Date().toISOString() },
+    });
+    for (const [socket, connection] of this.connections) {
+      if (connection.executionEngineId !== engineId) continue;
+      if (socket.readyState !== WebSocket.OPEN) continue;
+      try {
+        socket.send(serialized);
+      } catch {
+        this.connections.delete(socket);
+      }
+    }
+  }
+
   broadcastExecutionMetrics(engineId: string, data: unknown) {
     const events = this.eventBuffers.get(engineId) ?? [];
     const snapshotWithEvents =

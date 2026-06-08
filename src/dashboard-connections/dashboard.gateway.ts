@@ -7,10 +7,24 @@ import {
   SubscribeMessage,
   WebSocketGateway,
 } from '@nestjs/websockets';
+import { IncomingMessage } from 'http';
 import { WebSocket } from 'ws';
 import { DashboardAuthService } from './dashboard-auth.service';
 import { DashboardConnectionRegistryService } from './dashboard-connection-registry.service';
 import { LicenseService } from '../licensing/license.service';
+import { RateLimitService } from '../common/rate-limit/rate-limit.service';
+
+// ── Rate-limit constants ───────────────────────────────────────────────────
+/** Max new dashboard WS connections accepted per IP per minute. */
+const RL_DCONN_LIMIT  = 30;
+const RL_DCONN_WIN_MS = 60_000;
+
+/** Max dashboard.authenticate attempts per IP per minute. */
+const RL_DAUTH_LIMIT  = 10;
+const RL_DAUTH_WIN_MS = 60_000;
+
+// Symbol used to stash the remote IP on the socket at connect-time.
+const IP_PROP = Symbol('rl_ip');
 
 interface DashboardAuthMessage {
   access_token?: string;
@@ -29,9 +43,27 @@ export class DashboardGateway
     private readonly auth: DashboardAuthService,
     private readonly connections: DashboardConnectionRegistryService,
     private readonly licenses: LicenseService,
+    private readonly rateLimit: RateLimitService,
   ) {}
 
-  handleConnection(socket: WebSocket) {
+  handleConnection(socket: WebSocket, req: IncomingMessage) {
+    // Resolve remote IP (supports reverse-proxy X-Forwarded-For).
+    const forwarded = req.headers['x-forwarded-for'];
+    const ip =
+      (typeof forwarded === 'string' ? forwarded.split(',')[0].trim() : null) ??
+      req.socket?.remoteAddress ??
+      'unknown';
+
+    // Stash on socket so message handlers can use it without extra lookups.
+    (socket as unknown as Record<symbol, string>)[IP_PROP] = ip;
+
+    // Rate-limit: close immediately if this IP is flooding dashboard connections.
+    if (!this.rateLimit.check(`dash_conn:${ip}`, RL_DCONN_LIMIT, RL_DCONN_WIN_MS)) {
+      this.logger.warn(`Dashboard rate-limit: too many connections from ${ip}`);
+      socket.close(1008, 'rate_limit_exceeded');
+      return;
+    }
+
     this.connections.add(socket);
     this.logger.log(
       `Dashboard socket connected; total=${this.connections.count}`,
@@ -50,6 +82,17 @@ export class DashboardGateway
     @ConnectedSocket() socket: WebSocket,
     @MessageBody() message: DashboardAuthMessage,
   ) {
+    // Rate-limit before doing any crypto work on the token.
+    const ip = (socket as unknown as Record<symbol, string>)[IP_PROP] ?? 'unknown';
+    if (!this.rateLimit.check(`dauth:${ip}`, RL_DAUTH_LIMIT, RL_DAUTH_WIN_MS)) {
+      this.logger.warn(`dashboard.authenticate rate-limit exceeded from ${ip}`);
+      socket.close(1008, 'rate_limit_exceeded');
+      return {
+        event: 'dashboard.authentication_failed',
+        data: { reason: 'rate_limit_exceeded' },
+      };
+    }
+
     const user = await this.auth.verify(String(message?.access_token ?? ''));
     if (!user) {
       socket.close(1008, 'authentication_failed');

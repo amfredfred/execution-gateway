@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import gatewayConfig from './config/gateway.config';
+import { RateLimitModule } from './common/rate-limit/rate-limit.module';
 import { DashboardConnectionsModule } from './dashboard-connections/dashboard-connections.module';
 import { EngineConnectionsModule } from './engine-connections/engine-connections.module';
 import { LicensingModule } from './licensing/licensing.module';
@@ -17,6 +18,7 @@ import { SignalEngineModule } from './signal-engine/signal-engine.module';
       isGlobal: true,
       load: [gatewayConfig],
     }),
+    RateLimitModule,   // global — injects RateLimitService everywhere
     ProtocolModule,
     RoomsModule,
     LicensingModule,

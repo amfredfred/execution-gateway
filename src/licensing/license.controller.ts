@@ -4,16 +4,23 @@ import {
   ForbiddenException,
   Headers,
   HttpCode,
+  HttpException,
   HttpStatus,
   InternalServerErrorException,
   NotFoundException,
   Post,
   Param,
+  Req,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, SupabaseClient, User } from '@supabase/supabase-js';
 import { LicenseService } from './license.service';
+import { RateLimitService } from '../common/rate-limit/rate-limit.service';
+
+/** Max key-issuance requests per IP per hour (manual action — very low). */
+const RL_KEY_LIMIT  = 5;
+const RL_KEY_WIN_MS = 3_600_000;
 
 @Controller('licenses')
 export class LicenseController {
@@ -21,6 +28,7 @@ export class LicenseController {
 
   constructor(
     private readonly licenses: LicenseService,
+    private readonly rateLimit: RateLimitService,
     config: ConfigService,
   ) {
     const url = config.get<string>('supabase.url');
@@ -48,7 +56,13 @@ export class LicenseController {
   async issueKey(
     @Param('id') licenseId: string,
     @Headers('authorization') authHeader: string | undefined,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    @Req() req: any,
   ): Promise<{ key: string }> {
+    const ip = this.clientIp(req);
+    if (!this.rateLimit.check(`key_issue:${ip}`, RL_KEY_LIMIT, RL_KEY_WIN_MS)) {
+      throw new HttpException('Rate limit exceeded', HttpStatus.TOO_MANY_REQUESTS);
+    }
     const user = await this.resolveUser(authHeader);
     const result = await this.licenses.issueKey(licenseId, user.id);
 
@@ -89,6 +103,16 @@ export class LicenseController {
   }
 
   // ── helpers ──────────────────────────────────────────────────────────────
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private clientIp(req: any): string {
+    const forwarded = req.headers['x-forwarded-for'];
+    return (
+      (typeof forwarded === 'string' ? forwarded.split(',')[0].trim() : null) ??
+      req.socket?.remoteAddress ??
+      'unknown'
+    );
+  }
 
   private async resolveUser(authHeader: string | undefined): Promise<User> {
     const token = authHeader?.replace(/^bearer\s+/i, '').trim();

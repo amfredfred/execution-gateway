@@ -4,18 +4,27 @@ import {
   Controller,
   Headers,
   HttpCode,
+  HttpException,
   HttpStatus,
   Logger,
   Post,
   Req,
 } from '@nestjs/common';
 import { WebhookService } from './webhook.service';
+import { RateLimitService } from '../common/rate-limit/rate-limit.service';
+
+/** Max Lemon Squeezy webhook deliveries per IP per minute. */
+const RL_WH_LIMIT  = 60;
+const RL_WH_WIN_MS = 60_000;
 
 @Controller('webhooks')
 export class WebhookController {
   private readonly logger = new Logger(WebhookController.name);
 
-  constructor(private readonly webhooks: WebhookService) {}
+  constructor(
+    private readonly webhooks: WebhookService,
+    private readonly rateLimit: RateLimitService,
+  ) {}
 
   /**
    * POST /webhooks/lemon-squeezy
@@ -34,6 +43,17 @@ export class WebhookController {
     @Body() body: unknown,
     @Headers('x-signature') signature: string | undefined,
   ) {
+    // Rate-limit before signature work.
+    const forwarded = req.headers['x-forwarded-for'] as string | undefined;
+    const ip =
+      (typeof forwarded === 'string' ? forwarded.split(',')[0].trim() : null) ??
+      (req.socket?.remoteAddress as string | undefined) ??
+      'unknown';
+    if (!this.rateLimit.check(`wh_ls:${ip}`, RL_WH_LIMIT, RL_WH_WIN_MS)) {
+      this.logger.warn(`Webhook rate-limit exceeded from ${ip}`);
+      throw new HttpException('Rate limit exceeded', HttpStatus.TOO_MANY_REQUESTS);
+    }
+
     // Lemon Squeezy sends the raw body for signature verification.
     // NestJS exposes rawBody on the request when rawBody:true is set in main.ts.
     const rawBody: Buffer | undefined = req.rawBody as Buffer | undefined;

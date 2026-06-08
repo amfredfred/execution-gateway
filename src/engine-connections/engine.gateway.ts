@@ -7,6 +7,7 @@ import {
   SubscribeMessage,
   WebSocketGateway,
 } from '@nestjs/websockets';
+import { IncomingMessage } from 'http';
 import { WebSocket } from 'ws';
 import { ProtocolService } from '../protocol/protocol.service';
 import type { ProtocolMessage } from '../protocol/protocol.types';
@@ -20,6 +21,37 @@ import {
 } from './execution-lifecycle.service';
 import { DashboardConnectionRegistryService } from '../dashboard-connections/dashboard-connection-registry.service';
 import { RemoteCommandService } from '../commands/remote-command.service';
+import { RateLimitService } from '../common/rate-limit/rate-limit.service';
+
+// ── Rate-limit constants ───────────────────────────────────────────────────
+/** Max new engine WS connections accepted per IP per minute. */
+const RL_CONNECT_LIMIT  = 20;
+const RL_CONNECT_WIN_MS = 60_000;
+
+/** Max activation.request attempts per IP in a 10-minute window. */
+const RL_ACT_IP_LIMIT  = 5;
+const RL_ACT_IP_WIN_MS = 600_000;
+
+/** Max activation.request attempts per (hashed) key in a 10-minute window. */
+const RL_ACT_KEY_LIMIT  = 3;
+const RL_ACT_KEY_WIN_MS = 600_000;
+
+// Symbol used to stash the remote IP on the socket object at connect-time.
+const IP_PROP = Symbol('rl_ip');
+
+/**
+ * One-way FNV-1a bucket token for an activation key.
+ * Never logs or exposes the raw secret.
+ */
+function keyBucket(raw: string): string {
+  let h = 0x811c9dc5;
+  const len = Math.min(raw.length, 32);
+  for (let i = 0; i < len; i++) {
+    h = (h ^ raw.charCodeAt(i)) >>> 0;
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return `actkey:${h.toString(16)}`;
+}
 
 @WebSocketGateway({ path: '/engine' })
 export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -34,6 +66,7 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly lifecycles: ExecutionLifecycleService,
     private readonly dashboards: DashboardConnectionRegistryService,
     private readonly remoteCommands: RemoteCommandService,
+    private readonly rateLimit: RateLimitService,
   ) {
     this.connections.onStale((socket, engineId, reason) => {
       if (engineId) this.rooms.leave(engineId);
@@ -43,14 +76,34 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
   }
 
-  handleConnection(socket: WebSocket) {
+  handleConnection(socket: WebSocket, req: IncomingMessage) {
+    // Resolve remote IP (supports reverse-proxy X-Forwarded-For).
+    const forwarded = req.headers['x-forwarded-for'];
+    const ip =
+      (typeof forwarded === 'string' ? forwarded.split(',')[0].trim() : null) ??
+      req.socket?.remoteAddress ??
+      'unknown';
+
+    // Stash on socket so message handlers can use it without extra lookups.
+    (socket as unknown as Record<symbol, string>)[IP_PROP] = ip;
+
+    // Rate-limit: close immediately if this IP is hammering connections.
+    if (!this.rateLimit.check(`eng_conn:${ip}`, RL_CONNECT_LIMIT, RL_CONNECT_WIN_MS)) {
+      this.logger.warn(`Engine rate-limit: too many connections from ${ip}`);
+      socket.close(1008, 'rate_limit_exceeded');
+      return;
+    }
+
     this.connections.add(socket);
     this.logger.log(`Engine socket connected; total=${this.connections.count}`);
   }
 
   handleDisconnect(socket: WebSocket) {
     const engineId = this.connections.engineId(socket);
-    if (engineId) this.rooms.leave(engineId);
+    if (engineId) {
+      this.rooms.leave(engineId);
+      this.dashboards.broadcastEngineOffline(engineId);
+    }
     this.closeSession(socket, 'socket_disconnected');
     this.connections.remove(socket);
     this.logger.log(
@@ -148,6 +201,20 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const engineId = this.connections.engineId(socket);
     if (!engineId)
       return this.rejected(message.message_id, ['engine.hello required']);
+
+    // ── Rate-limit: per-IP ────────────────────────────────────────────────
+    const ip = (socket as unknown as Record<symbol, string>)[IP_PROP] ?? 'unknown';
+    if (!this.rateLimit.check(`act_ip:${ip}`, RL_ACT_IP_LIMIT, RL_ACT_IP_WIN_MS)) {
+      this.logger.warn(`activation.request rate-limit (IP) exceeded from ${ip}`);
+      return this.rejected(message.message_id, ['rate_limit_exceeded']);
+    }
+
+    // ── Rate-limit: per key (prevents brute-force across connections) ─────
+    const rawKey = String(accepted.message.payload.activation_key ?? '');
+    if (!this.rateLimit.check(keyBucket(rawKey), RL_ACT_KEY_LIMIT, RL_ACT_KEY_WIN_MS)) {
+      this.logger.warn(`activation.request rate-limit (key) exceeded from ${ip}`);
+      return this.rejected(message.message_id, ['rate_limit_exceeded']);
+    }
 
     const result = await this.licenses.activate(
       String(accepted.message.payload.activation_key),
