@@ -190,8 +190,12 @@ export class WebhookService {
     const plan    = planConfigFromVariant(attrs.first_order_item?.variant_id, this.config);
     const expiresAt = this.futureIso(plan.days);
 
-    // Resolve or create Supabase user
-    const userId = await this.resolveOrCreateUser(email, attrs.customer_name);
+    // Use supabase_user_id from checkout custom data if present (pre-linked at checkout),
+    // otherwise resolve/create by email.
+    const knownUserId = payload.meta.custom_data?.supabase_user_id as string | undefined;
+    const userId = knownUserId
+      ? await this.resolveUserById(knownUserId) ?? await this.resolveOrCreateUser(email, attrs.customer_name)
+      : await this.resolveOrCreateUser(email, attrs.customer_name);
     if (!userId) return;
 
     // Insert license row
@@ -224,7 +228,10 @@ export class WebhookService {
       ? new Date(new Date(attrs.renews_at).getTime() + plan.days * 86_400_000).toISOString()
       : this.futureIso(plan.days);
 
-    const userId = await this.resolveOrCreateUser(email, attrs.user_name);
+    const knownUserId = payload.meta.custom_data?.supabase_user_id as string | undefined;
+    const userId = knownUserId
+      ? await this.resolveUserById(knownUserId) ?? await this.resolveOrCreateUser(email, attrs.user_name)
+      : await this.resolveOrCreateUser(email, attrs.user_name);
     if (!userId) return;
 
     // Guard: skip if this user already has an active license (e.g. order_created
@@ -336,6 +343,12 @@ export class WebhookService {
     }
 
     this.logger.log(`New Supabase user created: ${email} (${data.user.id})`);
+    return data.user.id;
+  }
+
+  private async resolveUserById(id: string): Promise<string | null> {
+    const { data, error } = await this.supabase!.auth.admin.getUserById(id);
+    if (error || !data.user) return null;
     return data.user.id;
   }
 

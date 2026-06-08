@@ -10,6 +10,9 @@ interface LsVariantAttributes {
   is_subscription: boolean;
   interval: string | null; // "month" | "year" | null
   interval_count: number | null;
+  has_free_trial: boolean;
+  trial_interval: string | null;       // "day" | "week" | "month" | "year" | null
+  trial_interval_count: number | null;
   product_id: number;
   buy_now_url: string;
   sort: number;
@@ -49,6 +52,7 @@ export interface BillingPlan {
   features: string[];
   highlight: boolean;
   checkoutUrl: string;
+  trialDays: number | null;  // only set for yearly plans with a trial configured in LS
 }
 
 // ─── Static plan metadata ──────────────────────────────────────────────────────
@@ -192,6 +196,16 @@ export class BillingService {
     return json.data ?? [];
   }
 
+  // ── Trial helpers ─────────────────────────────────────────────────────────────
+
+  /** Convert LS trial_interval + trial_interval_count into a flat day count. */
+  private trialToDays(interval: string | null, count: number | null): number | null {
+    if (!interval || !count) return null;
+    const multipliers: Record<string, number> = { day: 1, week: 7, month: 30, year: 365 };
+    const m = multipliers[interval];
+    return m ? m * count : null;
+  }
+
   // ── Mapping ───────────────────────────────────────────────────────────────────
 
   private mapVariantsToPlans(variants: LsVariant[], currency: string): BillingPlan[] {
@@ -217,6 +231,11 @@ export class BillingService {
       const price = this.formatAmount(attrs.price, currency);
       const priceNote = this.buildPriceNote(attrs.price, attrs.interval, attrs.interval_count, currency);
 
+      // Trial only surfaced for yearly plans
+      const trialDays = meta.interval === 'yearly' && attrs.has_free_trial
+        ? this.trialToDays(attrs.trial_interval, attrs.trial_interval_count)
+        : null;
+
       plans.push({
         variantId: v.id,
         planKey: meta.planKey,
@@ -230,6 +249,7 @@ export class BillingService {
         features: meta.features,
         highlight: meta.highlight,
         checkoutUrl: attrs.buy_now_url,
+        trialDays,
       });
     }
 
