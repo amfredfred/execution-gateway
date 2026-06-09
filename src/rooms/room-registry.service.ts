@@ -62,6 +62,20 @@ export class RoomRegistryService implements OnModuleInit, OnModuleDestroy {
     if (symbolsChanged) this.notifySymbolsChanged();
   }
 
+  /**
+   * Refresh the TTL for all room memberships held by an engine.
+   * Called on every engine heartbeat so rooms never expire for active engines.
+   */
+  renew(engineId: string, ttlSeconds?: number) {
+    const ttl =
+      ttlSeconds ?? this.config.get<number>('rooms.defaultTtlSeconds', 3600);
+    const expiresAt = Date.now() + ttl * 1000;
+    for (const room of this.rooms.values()) {
+      const membership = room.members.get(engineId);
+      if (membership) membership.expiresAt = expiresAt;
+    }
+  }
+
   leave(engineId: string, symbols?: string[]) {
     const targets = symbols?.map((symbol) => this.normalizeSymbol(symbol));
     let symbolsChanged = false;

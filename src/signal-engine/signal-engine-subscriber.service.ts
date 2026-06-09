@@ -21,6 +21,7 @@ export class SignalEngineSubscriberService
   private readonly logger = new Logger(SignalEngineSubscriberService.name);
   private socket?: WebSocket;
   private reconnectTimer?: NodeJS.Timeout;
+  private pingTimer?: NodeJS.Timeout;
   private unsubscribeRoomChanges?: () => void;
   private unsubscribeMetricDemand?: () => void;
   private desiredSymbols = new Set<string>();
@@ -28,6 +29,12 @@ export class SignalEngineSubscriberService
   private metricsDesired = false;
   private metricsSubscribed = false;
   private stopping = false;
+  private _availableSymbols: string[] = [];
+
+  /** Symbols the signal engine currently supports — populated on connect. */
+  get availableSymbols(): string[] {
+    return this._availableSymbols;
+  }
 
   constructor(
     private readonly config: ConfigService,
@@ -54,6 +61,7 @@ export class SignalEngineSubscriberService
     this.unsubscribeRoomChanges?.();
     this.unsubscribeMetricDemand?.();
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    if (this.pingTimer) clearInterval(this.pingTimer);
     this.socket?.close();
   }
 
@@ -74,11 +82,20 @@ export class SignalEngineSubscriberService
       this.metricsSubscribed = false;
       this.syncSubscriptions();
       this.syncMetricSubscription();
+      this.startPing();
     });
     this.socket.on('message', (raw) => this.handleMessage(raw));
-    this.socket.on('close', () => this.scheduleReconnect());
+    this.socket.on('close', () => {
+      this.stopPing();
+      this.scheduleReconnect();
+    });
     this.socket.on('error', (error) => {
       this.logger.warn(`Signal Engine connection error: ${error.message}`);
+    });
+    // Terminate zombie connections: if a pong is not received within the ping
+    // interval, the ws library will emit 'error' + 'close', triggering reconnect.
+    this.socket.on('pong', () => {
+      // pong received — connection is alive; nothing to do.
     });
   }
 
@@ -97,6 +114,20 @@ export class SignalEngineSubscriberService
       }
 
       const event = String(message.event ?? '');
+
+      // Signal engine handshake — capture the symbols it trades.
+      if (event === 'connected' && message.payload) {
+        const raw = (message.payload as Record<string, unknown>).supported_symbols;
+        if (Array.isArray(raw)) {
+          this._availableSymbols = (raw as unknown[])
+            .filter((s): s is string => typeof s === 'string')
+            .map((s) => s.trim().toUpperCase());
+          this.logger.log(
+            `Signal Engine supports: ${this._availableSymbols.join(', ')}`,
+          );
+        }
+        return;
+      }
 
       // Metrics snapshot → enrich with buffered events and broadcast to dashboards
       if (event === 'metrics.snapshot' && message.payload) {
@@ -190,6 +221,27 @@ export class SignalEngineSubscriberService
         JSON.stringify({ action: 'unsubscribe', symbols: removals }),
       );
       for (const symbol of removals) this.subscribedSymbols.delete(symbol);
+    }
+  }
+
+  private startPing() {
+    this.stopPing();
+    // Send a WS ping every 30 s. If the signal engine doesn't respond with a
+    // pong, the ws library will terminate the socket (error + close events),
+    // which triggers reconnect and a fresh subscribe — preventing zombie sockets
+    // where readyState appears OPEN but the signal engine side is already gone.
+    this.pingTimer = setInterval(() => {
+      if (this.socket?.readyState === WebSocket.OPEN) {
+        this.socket.ping();
+      }
+    }, 30_000);
+    this.pingTimer.unref();
+  }
+
+  private stopPing() {
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = undefined;
     }
   }
 

@@ -186,6 +186,12 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.connections.touch(socket);
       const sessionId = this.connections.sessionId(socket);
       if (sessionId) this.sessions.touch(sessionId);
+      // Renew room membership TTL so active engines never get silently evicted.
+      // Without this, rooms expire after ROOM_DEFAULT_TTL_SECONDS (1 h default)
+      // even though the engine is alive and sending heartbeats — causing signal
+      // delivery to stop until the engine disconnects and re-subscribes.
+      const engineId = this.connections.engineId(socket);
+      if (engineId) this.rooms.renew(engineId);
     }
     return accepted.response;
   }
@@ -347,14 +353,22 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() message: ProtocolMessage,
   ) {
     const accepted = this.accept('room.subscribe', message);
-    if (!accepted.ok) return accepted.response;
+    if (!accepted.ok) {
+      this.logger.warn(`room.subscribe rejected (validation): ${JSON.stringify(accepted.response)}`);
+      return accepted.response;
+    }
 
     const engineId = this.connections.engineId(socket);
-    if (!engineId)
+    if (!engineId) {
+      this.logger.warn('room.subscribe rejected: engine.hello required');
       return this.rejected(message.message_id, ['engine.hello required']);
+    }
 
     const payloadEngineId = String(accepted.message.payload.engine_id);
     if (payloadEngineId !== engineId) {
+      this.logger.warn(
+        `room.subscribe rejected: engine_id mismatch — payload=${payloadEngineId} conn=${engineId}`,
+      );
       return this.rejected(message.message_id, [
         'engine_id does not match connection',
       ]);
@@ -366,6 +380,9 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
       symbols,
     );
     if (authorizationErrors.length > 0) {
+      this.logger.warn(
+        `room.subscribe rejected: engine=${engineId} symbols=${symbols.join(',')} errors=${authorizationErrors.join(',')}`,
+      );
       return this.rejected(message.message_id, authorizationErrors);
     }
 
@@ -375,6 +392,9 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const licenseExpiresAt = this.connections.licenseExpiresAt(socket);
     const ttlSeconds = this.cappedTtl(requestedTtl, licenseExpiresAt);
     this.rooms.join(engineId, socket, symbols, ttlSeconds);
+    this.logger.log(
+      `room.subscribe: engine=${engineId} symbols=${symbols.join(',')} ttl=${ttlSeconds ?? 'default'}s`,
+    );
     return accepted.response;
   }
 

@@ -6,6 +6,7 @@ import type {
   LicenseActivationContext,
   LicenseActivationResult,
 } from './license.types';
+import { SignalEngineSubscriberService } from '../signal-engine/signal-engine-subscriber.service';
 
 interface ActivationRpcRow {
   license_id: string;
@@ -20,7 +21,10 @@ export class LicenseService {
   private readonly supabase?: SupabaseClient;
   private readonly activationKeyPepper?: string;
 
-  constructor(private readonly config: ConfigService) {
+  constructor(
+    private readonly config: ConfigService,
+    private readonly signalEngine: SignalEngineSubscriberService,
+  ) {
     this.activationKeyPepper = this.config.get<string>(
       'licensing.activationKeyPepper',
     );
@@ -81,10 +85,20 @@ export class LicenseService {
       .update(raw)
       .digest('hex');
 
+    const symbols = this.signalEngine.availableSymbols;
+    if (symbols.length === 0) {
+      this.logger.warn(
+        `Key issuance for license ${licenseId}: signal engine has no available symbols — ` +
+        'ensure the signal engine is connected before issuing keys',
+      );
+      return { error: 'Signal engine not connected — no symbols available to entitle' };
+    }
+
     const { error } = await this.supabase.rpc('issue_activation_key', {
       p_license_id:    licenseId,
       p_owner_user_id: userId,
       p_new_key_hash:  hash,
+      p_symbols:       symbols,
     });
 
     if (error) {
@@ -92,7 +106,9 @@ export class LicenseService {
       return { error: error.message };
     }
 
-    this.logger.log(`Activation key issued for license ${licenseId}`);
+    this.logger.log(
+      `Activation key issued for license ${licenseId} — symbols: ${symbols.join(', ')}`,
+    );
     return { raw };
   }
 
