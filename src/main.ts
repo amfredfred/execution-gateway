@@ -11,7 +11,15 @@ async function bootstrap() {
   // Allow the customer dashboard origin to call HTTP endpoints.
   // In production, restrict this to the deployed dashboard URL via
   // GATEWAY_CORS_ORIGIN env var.
-  const corsOrigin = config.get<string>('runtime.corsOrigin') ?? '*';
+  const corsRaw = config.get<string>('runtime.corsOrigin') ?? '*';
+  // Support comma-separated list of origins, e.g.:
+  //   GATEWAY_CORS_ORIGIN=https://app.somicast.com,http://localhost:3000
+  const corsOrigin: string | string[] =
+    corsRaw === '*'
+      ? '*'
+      : corsRaw.includes(',')
+        ? corsRaw.split(',').map((s) => s.trim()).filter(Boolean)
+        : corsRaw;
   app.enableCors({
     origin: corsOrigin,
     methods: ['GET', 'POST', 'DELETE', 'PATCH', 'OPTIONS'],
