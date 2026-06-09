@@ -14,8 +14,23 @@ interface LsVariantAttributes {
   trial_interval: string | null;       // "day" | "week" | "month" | "year" | null
   trial_interval_count: number | null;
   product_id: number;
-  buy_now_url: string;
   sort: number;
+}
+
+interface LsProductAttributes {
+  name: string;
+  status: string;
+  buy_now_url: string | null;
+}
+
+interface LsProduct {
+  id: string;
+  type: string;
+  attributes: LsProductAttributes;
+}
+
+interface LsProductsResponse {
+  data: LsProduct[];
 }
 
 interface LsVariant {
@@ -72,50 +87,80 @@ const PLAN_META: Array<{ match: string } & PlanMeta> = [
     match: 'starter monthly',
     planKey: 'starter',
     interval: 'monthly',
-    name: 'Starter',
+    name: 'AQM Starter',
     devices: 1,
-    desc: 'Get started with one live execution engine.',
-    features: [],
+    desc: 'One Trading Agent. Signals delivered and traded automatically on your MT5.',
+    features: [
+      '1 Trading Agent',
+      'Live signal delivery',
+      'Automatic MT5 execution',
+      'Customer dashboard',
+    ],
     highlight: false,
   },
   {
     match: 'starter yearly',
     planKey: 'starter',
     interval: 'yearly',
-    name: 'Starter',
-    devices: 5,
-    desc: 'Run up to 5 engines at a reduced yearly rate.',
-    features: [],
+    name: 'AQ Starter',
+    devices: 1,
+    desc: 'Everything in AQM Starter — billed yearly at a lower rate.',
+    features: [
+      '1 Trading Agent',
+      'Live signal delivery',
+      'Automatic MT5 execution',
+      'Customer dashboard',
+      '20% yearly discount',
+    ],
     highlight: false,
   },
   {
     match: 'pro monthly',
     planKey: 'pro',
     interval: 'monthly',
-    name: 'Pro',
+    name: 'AQM Pro',
     devices: 3,
-    desc: 'Three engines running simultaneously.',
-    features: [],
+    desc: 'Run up to 3 Trading Agents across multiple accounts or VPS instances simultaneously.',
+    features: [
+      '3 Trading Agents',
+      'Live signal delivery',
+      'Automatic MT5 execution',
+      'Multi-account support',
+      'Customer dashboard',
+    ],
     highlight: true,
   },
   {
     match: 'pro yearly',
     planKey: 'pro',
     interval: 'yearly',
-    name: 'Pro',
-    devices: 10,
-    desc: 'Scale to 10 engines at a reduced yearly rate.',
-    features: [],
+    name: 'AQ Pro',
+    devices: 3,
+    desc: 'Everything in AQM Pro — billed yearly at a lower rate.',
+    features: [
+      '3 Trading Agents',
+      'Live signal delivery',
+      'Automatic MT5 execution',
+      'Multi-account support',
+      'Customer dashboard',
+      '20% yearly discount',
+    ],
     highlight: true,
   },
   {
     match: 'infrastructure',
     planKey: 'infrastructure',
     interval: 'custom',
-    name: 'Infrastructure',
+    name: 'AQ Infrastructure',
     devices: 9999,
-    desc: 'Unlimited engines. Reach out to discuss.',
-    features: ['Unlimited execution engines', 'Signal delivery', 'Customer dashboard'],
+    desc: 'Unlimited Trading Agents for institutions, prop firms, and large-scale deployments.',
+    features: [
+      'Unlimited Trading Agents',
+      'Dedicated signal infrastructure',
+      'Custom integration support',
+      'Priority onboarding',
+      'Customer dashboard',
+    ],
     highlight: false,
   },
 ];
@@ -148,13 +193,14 @@ export class BillingService {
     }
 
     try {
-      // Fetch store currency + variants in parallel
-      const [currency, variants] = await Promise.all([
+      // Fetch store currency, variants, and products in parallel
+      const [currency, variants, products] = await Promise.all([
         this.fetchStoreCurrency(),
         this.fetchVariants(),
+        this.fetchProducts(),
       ]);
       this._currency = currency;
-      const plans = this.mapVariantsToPlans(variants, currency);
+      const plans = this.mapVariantsToPlans(variants, currency, products);
       this._cache = plans;
       this._cacheAt = Date.now();
       return plans;
@@ -196,6 +242,30 @@ export class BillingService {
     return json.data ?? [];
   }
 
+  private async fetchProducts(): Promise<Map<number, LsProduct>> {
+    if (!this.storeId) return new Map();
+    const res = await fetch(
+      `https://api.lemonsqueezy.com/v1/products?filter[store_id]=${this.storeId}&page[size]=50`,
+      {
+        headers: {
+          Accept: 'application/vnd.api+json',
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+      },
+    );
+    if (!res.ok) {
+      this.logger.warn(`Failed to fetch products: ${res.status}`);
+      return new Map();
+    }
+    const json = await res.json() as LsProductsResponse;
+    const map = new Map<number, LsProduct>();
+    for (const p of json.data ?? []) {
+      map.set(Number(p.id), p);
+    }
+    this.logger.debug(`Fetched ${map.size} products from LS`);
+    return map;
+  }
+
   // ── Trial helpers ─────────────────────────────────────────────────────────────
 
   /** Convert LS trial_interval + trial_interval_count into a flat day count. */
@@ -208,7 +278,11 @@ export class BillingService {
 
   // ── Mapping ───────────────────────────────────────────────────────────────────
 
-  private mapVariantsToPlans(variants: LsVariant[], currency: string): BillingPlan[] {
+  private mapVariantsToPlans(variants: LsVariant[], currency: string, products: Map<number, LsProduct>): BillingPlan[] {
+    this.logger.debug(`LS returned ${variants.length} variants`);
+    if (variants.length > 0) {
+      this.logger.debug(`Full variant [0] raw: ${JSON.stringify(variants[0], null, 2)}`);
+    }
     const idToMeta = new Map<string, (typeof PLAN_META)[number]>();
     const keys: Array<[string, (typeof PLAN_META)[number]]> = [
       [this.config.get<string>('licensing.variantStarterMonthly') ?? '', PLAN_META.find(m => m.match === 'starter monthly')!],
@@ -228,8 +302,15 @@ export class BillingService {
       if (!meta) continue;
 
       const attrs = v.attributes;
-      const price = this.formatAmount(attrs.price, currency);
+      // For yearly plans show the per-month equivalent as the headline price
+      const isYearly = attrs.interval === 'year';
+      const headlineAmount = isYearly ? Math.round(attrs.price / 12) : attrs.price;
+      const price = this.formatAmount(headlineAmount, currency);
       const priceNote = this.buildPriceNote(attrs.price, attrs.interval, attrs.interval_count, currency);
+
+      const product = products.get(attrs.product_id);
+      const checkoutUrl = product?.attributes.buy_now_url ?? '';
+      this.logger.debug(`Matched variant ${v.id} → ${meta.planKey}/${meta.interval} | product=${attrs.product_id} buy_now_url="${checkoutUrl}"`);
 
       // Trial only surfaced for yearly plans
       const trialDays = meta.interval === 'yearly' && attrs.has_free_trial
@@ -248,7 +329,7 @@ export class BillingService {
         desc: meta.desc,
         features: meta.features,
         highlight: meta.highlight,
-        checkoutUrl: attrs.buy_now_url,
+        checkoutUrl,
         trialDays,
       });
     }
@@ -286,16 +367,14 @@ export class BillingService {
     if (!interval || smallestUnit === 0) return '';
 
     if (interval === 'month') {
-      return count && count > 1 ? `billed every ${count} months` : '/mo';
+      // /mo is already in the price headline — only note if multi-month billing cycle
+      return count && count > 1 ? `billed every ${count} months` : '';
     }
 
     if (interval === 'year') {
-      // Show per-month equivalent and total yearly amount
-      const yearly = smallestUnit / 100;
-      const perMonth = yearly / 12;
-      const perMonthFmt = this.formatAmount(perMonth * 100, currency);
+      // Headline already shows per-month with /mo; note just shows the total billed
       const yearlyFmt = this.formatAmount(smallestUnit, currency);
-      return `${perMonthFmt}/mo · ${yearlyFmt} billed yearly`;
+      return `· ${yearlyFmt} billed yearly`;
     }
 
     return '';

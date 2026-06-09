@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+﻿import { Controller, Get } from '@nestjs/common';
 import { ConnectionRegistryService } from './engine-connections/connection-registry.service';
 import { ProtocolService } from './protocol/protocol.service';
 import { RoomRegistryService } from './rooms/room-registry.service';
@@ -14,7 +14,7 @@ export class AppController {
   @Get('health')
   health() {
     return {
-      service: 'apexquanttrader-execution-gateway',
+      service: 'apexquantel-execution-gateway',
       status: 'ok',
       protocol_versions: this.protocol.supportedVersions,
       connected_engines: this.connections.count,

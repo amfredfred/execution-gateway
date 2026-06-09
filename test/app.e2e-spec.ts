@@ -1,4 +1,4 @@
-import { Test, TestingModule } from '@nestjs/testing';
+﻿import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import { WsAdapter } from '@nestjs/platform-ws';
 import request from 'supertest';
@@ -24,7 +24,7 @@ describe('AppController (e2e)', () => {
       .expect(200)
       .expect((response) => {
         expect(response.body).toMatchObject({
-          service: 'apexquanttrader-execution-gateway',
+          service: 'apexquantel-execution-gateway',
           status: 'ok',
           protocol_versions: ['1.0'],
           connected_engines: 0,

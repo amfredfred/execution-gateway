@@ -1,4 +1,4 @@
-export default () => ({
+﻿export default () => ({
   runtime: {
     environment: process.env.NODE_ENV ?? 'development',
     port: Number(process.env.PORT ?? 4000),
@@ -29,14 +29,14 @@ export default () => ({
     secure: process.env.SMTP_SECURE === 'true',   // true for port 465
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
-    from: process.env.EMAIL_FROM ?? 'Apex Quant Trader <noreply@apexquanttrader.io>',
+    from: process.env.EMAIL_FROM ?? 'Apex Quantel <noreply@apexquantel.io>',
   },
   billing: {
     lsApiKey:  process.env.LS_API_KEY,
     lsStoreId: process.env.LS_STORE_ID,
   },
   dashboard: {
-    url: process.env.DASHBOARD_URL ?? 'https://app.apexquanttrader.io',
+    url: process.env.DASHBOARD_URL ?? 'https://app.apexquantel.io',
   },
   connections: {
     heartbeatIntervalSeconds: Number(
