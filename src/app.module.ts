@@ -32,4 +32,4 @@ import { BillingModule } from './billing/billing.module';
   ],
   controllers: [AppController],
 })
-export class AppModule {}
+export class AppModule { }

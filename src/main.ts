@@ -5,7 +5,7 @@ import { AppModule } from './app.module';
 
 async function bootstrap() {
   // rawBody: true enables req.rawBody for webhook signature verification.
-  const app = await NestFactory.create(AppModule, { rawBody: true });
+  const app = await NestFactory.create(AppModule, { rawBody: true, logger: ['error', 'warn', 'log'] });
   const config = app.get(ConfigService);
 
   // Allow the customer dashboard origin to call HTTP endpoints.

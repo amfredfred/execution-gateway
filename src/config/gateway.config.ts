@@ -13,12 +13,12 @@
     serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
   },
   licensing: {
-    activationKeyPepper:          process.env.ACTIVATION_KEY_PEPPER,
-    variantStarterMonthly:        process.env.LS_VARIANT_STARTER_MONTHLY        ? Number(process.env.LS_VARIANT_STARTER_MONTHLY)        : undefined,
-    variantStarterYearly:         process.env.LS_VARIANT_STARTER_YEARLY         ? Number(process.env.LS_VARIANT_STARTER_YEARLY)         : undefined,
-    variantProMonthly:            process.env.LS_VARIANT_PRO_MONTHLY            ? Number(process.env.LS_VARIANT_PRO_MONTHLY)            : undefined,
-    variantProYearly:             process.env.LS_VARIANT_PRO_YEARLY             ? Number(process.env.LS_VARIANT_PRO_YEARLY)             : undefined,
-    variantInfrastructure:        process.env.LS_VARIANT_INFRASTRUCTURE         ? Number(process.env.LS_VARIANT_INFRASTRUCTURE)         : undefined,
+    activationKeyPepper: process.env.ACTIVATION_KEY_PEPPER,
+    variantStarterMonthly: process.env.LS_VARIANT_STARTER_MONTHLY ? Number(process.env.LS_VARIANT_STARTER_MONTHLY) : undefined,
+    variantStarterYearly: process.env.LS_VARIANT_STARTER_YEARLY ? Number(process.env.LS_VARIANT_STARTER_YEARLY) : undefined,
+    variantProMonthly: process.env.LS_VARIANT_PRO_MONTHLY ? Number(process.env.LS_VARIANT_PRO_MONTHLY) : undefined,
+    variantProYearly: process.env.LS_VARIANT_PRO_YEARLY ? Number(process.env.LS_VARIANT_PRO_YEARLY) : undefined,
+    variantInfrastructure: process.env.LS_VARIANT_INFRASTRUCTURE ? Number(process.env.LS_VARIANT_INFRASTRUCTURE) : undefined,
   },
   webhooks: {
     lemonSqueezySecret: process.env.LEMON_SQUEEZY_WEBHOOK_SECRET,
@@ -32,7 +32,7 @@
     from: process.env.EMAIL_FROM ?? 'Apex Quantel <noreply@apexquantel.io>',
   },
   billing: {
-    lsApiKey:  process.env.LS_API_KEY,
+    lsApiKey: process.env.LS_API_KEY,
     lsStoreId: process.env.LS_STORE_ID,
   },
   dashboard: {

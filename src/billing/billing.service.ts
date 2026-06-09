@@ -280,9 +280,6 @@ export class BillingService {
 
   private mapVariantsToPlans(variants: LsVariant[], currency: string, products: Map<number, LsProduct>): BillingPlan[] {
     this.logger.debug(`LS returned ${variants.length} variants`);
-    if (variants.length > 0) {
-      this.logger.debug(`Full variant [0] raw: ${JSON.stringify(variants[0], null, 2)}`);
-    }
     const idToMeta = new Map<string, (typeof PLAN_META)[number]>();
     const keys: Array<[string, (typeof PLAN_META)[number]]> = [
       [this.config.get<string>('licensing.variantStarterMonthly') ?? '', PLAN_META.find(m => m.match === 'starter monthly')!],

@@ -166,6 +166,19 @@ export class WebhookService {
       case 'subscription_expired':
         await this.handleSubscriptionEnded(payload);
         break;
+      case 'subscription_payment_failed':
+        await this.handlePaymentFailed(payload);
+        break;
+      case 'subscription_resumed':
+      case 'subscription_unpaused':
+        await this.handleSubscriptionResumed(payload);
+        break;
+      case 'subscription_plan_changed':
+        await this.handlePlanChanged(payload);
+        break;
+      case 'order_refunded':
+        await this.handleOrderRefunded(payload);
+        break;
       default:
         this.logger.debug(`Unhandled Lemon Squeezy event: ${event}`);
     }
@@ -318,6 +331,123 @@ export class WebhookService {
     }
 
     this.logger.log(`Subscription ended: suspended license for ${email}`);
+  }
+
+  // ── Payment failed → log only (LS will retry) ─────────────────────────────
+
+  private async handlePaymentFailed(payload: LsWebhookPayload): Promise<void> {
+    const attrs = payload.data.attributes as LsSubscriptionAttributes;
+    const email = (attrs.customer_email || attrs.user_email) ?? '(unknown)';
+    // Lemon Squeezy retries failed payments automatically; the license remains
+    // active during the retry window.  We log prominently so ops can monitor.
+    this.logger.warn(
+      `\n${'─'.repeat(70)}\n` +
+      `  PAYMENT FAILED — customer: ${email}\n` +
+      `  Subscription ID : ${payload.data.id}\n` +
+      `  LS will retry automatically. License left active.\n` +
+      `${'─'.repeat(70)}`,
+    );
+  }
+
+  // ── Subscription resumed / unpaused → reactivate license ──────────────────
+
+  private async handleSubscriptionResumed(payload: LsWebhookPayload): Promise<void> {
+    if (!this.supabase) return;
+
+    const attrs = payload.data.attributes as LsSubscriptionAttributes;
+    const email = attrs.customer_email || attrs.user_email;
+    if (!email) return;
+
+    const userId = await this.resolveUserId(email);
+    if (!userId) return;
+
+    const newExpiresAt = attrs.renews_at
+      ? new Date(
+          new Date(attrs.renews_at).getTime() + DEFAULT_LICENSE_DAYS * 86_400_000,
+        ).toISOString()
+      : this.futureIso(DEFAULT_LICENSE_DAYS);
+
+    const { error } = await this.supabase
+      .from('licenses')
+      .update({ status: 'active', expires_at: newExpiresAt, updated_at: new Date().toISOString() })
+      .eq('owner_user_id', userId)
+      .eq('status', 'suspended');
+
+    if (error) {
+      this.logger.error(`Subscription resumed: failed to reactivate license for ${email} — ${error.message}`);
+      return;
+    }
+
+    this.logger.log(`Subscription resumed: reactivated license for ${email}`);
+  }
+
+  // ── Plan changed → update max_devices ─────────────────────────────────────
+
+  private async handlePlanChanged(payload: LsWebhookPayload): Promise<void> {
+    if (!this.supabase) return;
+
+    const attrs = payload.data.attributes as LsSubscriptionAttributes;
+    const email = attrs.customer_email || attrs.user_email;
+    if (!email) return;
+
+    const userId = await this.resolveUserId(email);
+    if (!userId) return;
+
+    const plan = planConfigFromVariant(attrs.variant_id, this.config);
+    const newExpiresAt = attrs.renews_at
+      ? new Date(
+          new Date(attrs.renews_at).getTime() + plan.days * 86_400_000,
+        ).toISOString()
+      : this.futureIso(plan.days);
+
+    const { error } = await this.supabase
+      .from('licenses')
+      .update({
+        max_devices: plan.maxDevices,
+        expires_at: newExpiresAt,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('owner_user_id', userId)
+      .eq('status', 'active');
+
+    if (error) {
+      this.logger.error(`Plan changed: failed to update license for ${email} — ${error.message}`);
+      return;
+    }
+
+    this.logger.log(
+      `Plan changed: updated license for ${email} — max_devices=${plan.maxDevices}, expires=${newExpiresAt}`,
+    );
+  }
+
+  // ── Order refunded → suspend license ──────────────────────────────────────
+
+  private async handleOrderRefunded(payload: LsWebhookPayload): Promise<void> {
+    if (!this.supabase) return;
+
+    const attrs = payload.data.attributes as LsOrderAttributes;
+    const email = attrs.customer_email || attrs.user_email;
+    if (!email) return;
+
+    const userId = await this.resolveUserId(email);
+    if (!userId) return;
+
+    const { error } = await this.supabase
+      .from('licenses')
+      .update({
+        status: 'suspended',
+        activation_key_hash: '',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('owner_user_id', userId)
+      .eq('status', 'active');
+
+    if (error) {
+      this.logger.error(`Order refunded: failed to suspend license for ${email} — ${error.message}`);
+      return;
+    }
+
+    this.logger.log(`Order refunded: suspended license for ${email}`);
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
@@ -500,7 +630,7 @@ export class WebhookService {
           <td style="padding:32px;">
             <h1 style="margin:0 0 8px;color:#0f172a;font-size:22px;font-weight:700;">Your activation key is ready</h1>
             <p style="margin:0 0 24px;color:#475569;font-size:15px;line-height:1.6;">
-              Hi ${name}, thanks for your purchase. Copy the key below and paste it into your engine's
+              Hi ${name}, thanks for your purchase. Copy the key below and paste it into your AQ Agent's
               <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:13px;">config.yaml</code>
               under <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:13px;">gateway.activation_key</code>.
             </p>
@@ -550,7 +680,7 @@ export class WebhookService {
       '',
       `  ${rawKey}`,
       '',
-      'Paste this into your engine config.yaml under gateway.activation_key.',
+      'Paste this into your AQ Agent config.yaml under gateway.activation_key.',
       '',
       '⚠️  Keep this key private. It is shown only once.',
       'If you lose it, rotate it from your dashboard.',
