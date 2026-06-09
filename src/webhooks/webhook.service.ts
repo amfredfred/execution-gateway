@@ -69,10 +69,10 @@ function planConfigFromVariant(
   const v = Number(variantId);
   const get = (key: string) => { const n = config.get<number>(key); return n ? Number(n) : undefined; };
 
-  if (get('licensing.variantStarterMonthly') === v) return { maxDevices: 1,    days: 30  };
-  if (get('licensing.variantStarterYearly')  === v) return { maxDevices: 5,    days: 365 };
-  if (get('licensing.variantProMonthly')     === v) return { maxDevices: 3,    days: 30  };
-  if (get('licensing.variantProYearly')      === v) return { maxDevices: 10,   days: 365 };
+  if (get('licensing.variantStarterMonthly') === v) return { maxDevices: 1, days: 30  };
+  if (get('licensing.variantStarterYearly')  === v) return { maxDevices: 1, days: 365 };
+  if (get('licensing.variantProMonthly')     === v) return { maxDevices: 3, days: 30  };
+  if (get('licensing.variantProYearly')      === v) return { maxDevices: 3, days: 365 };
   if (get('licensing.variantInfrastructure') === v) return { maxDevices: 9999, days: 365 };
 
   return { maxDevices: DEFAULT_MAX_DEVICES, days: DEFAULT_LICENSE_DAYS };
@@ -370,8 +370,8 @@ export class WebhookService {
       .from('licenses')
       .insert({
         owner_user_id: ownerUserId,
-        activation_key_hash: '', // will be set by issueKey
-        status: 'pending',
+        activation_key_hash: '', // will be updated by issueKey
+        status: 'active',
         max_devices: maxDevices,
         expires_at: expiresAt,
         created_at: new Date().toISOString(),
