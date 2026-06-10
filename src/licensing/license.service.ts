@@ -140,6 +140,40 @@ export class LicenseService {
   }
 
   /**
+   * Admin variant: issues an activation key for any license without ownership
+   * check. Looks up the real owner and delegates to issueKey().
+   */
+  async issueKeyAdmin(
+    licenseId: string,
+  ): Promise<{ raw: string } | { error: string }> {
+    if (!this.supabase) return { error: 'Supabase is not configured' };
+    const { data, error } = await this.supabase
+      .from('licenses')
+      .select('owner_user_id')
+      .eq('id', licenseId)
+      .maybeSingle();
+    if (error || !data) return { error: 'license not found' };
+    return this.issueKey(licenseId, (data as { owner_user_id: string }).owner_user_id);
+  }
+
+  /**
+   * Admin variant: revokes the activation key for any license without
+   * ownership check.
+   */
+  async revokeKeyAdmin(
+    licenseId: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    if (!this.supabase) return { ok: false, error: 'Supabase is not configured' };
+    const { data, error } = await this.supabase
+      .from('licenses')
+      .select('owner_user_id')
+      .eq('id', licenseId)
+      .maybeSingle();
+    if (error || !data) return { ok: false, error: 'license not found' };
+    return this.revokeKey(licenseId, (data as { owner_user_id: string }).owner_user_id);
+  }
+
+  /**
    * Generates a device-bound credential (TRDC-<64 hex>), stores its
    * HMAC-SHA256 hash in `engine_devices.credential_hash`, and returns the
    * plaintext.  Returns null on any failure — callers should proceed without

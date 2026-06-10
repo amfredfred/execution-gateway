@@ -77,6 +77,55 @@ export class RemoteCommandService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Admin variant: creates a command for any engine without ownership check.
+   * Resolves the engine_device_id and owner from engine_devices + licenses,
+   * then inserts directly (bypassing the ownership RPC).
+   */
+  async createAdmin(
+    engineId: string,
+    commandType: string,
+    expiresInSeconds = 30,
+  ): Promise<CommandResult> {
+    if (!this.supabase) return { ok: false, error: 'Supabase is not configured' };
+
+    const { data: device, error: devErr } = await this.supabase
+      .from('engine_devices')
+      .select('id, license_id, licenses!inner(owner_user_id)')
+      .eq('engine_id', engineId)
+      .eq('status', 'active')
+      .maybeSingle();
+
+    if (devErr || !device) {
+      return { ok: false, error: `Engine ${engineId} not found or inactive` };
+    }
+
+    const ownerUserId =
+      (device as { licenses?: { owner_user_id?: string } }).licenses?.owner_user_id ?? null;
+    const expiresAt = new Date(Date.now() + expiresInSeconds * 1000).toISOString();
+
+    const { data, error } = await this.supabase
+      .from('remote_commands')
+      .insert({
+        engine_device_id: device.id,
+        command_type: commandType,
+        status: 'pending',
+        expires_at: expiresAt,
+        owner_user_id: ownerUserId,
+      })
+      .select('id,engine_device_id,command_type,status,expires_at,created_at')
+      .single();
+
+    if (error || !data) {
+      this.logger.warn(`Admin command insert failed: ${error?.message}`);
+      return { ok: false, error: error?.message ?? 'Insert failed' };
+    }
+
+    const row = data as CommandRecord;
+    this.logger.log(`Admin command ${row.id} (${commandType}) created for engine ${engineId}`);
+    return { ok: true, command: row };
+  }
+
+  /**
    * Marks a command as delivered in Supabase after the engine socket send succeeds.
    */
   async markDelivered(commandId: string): Promise<void> {

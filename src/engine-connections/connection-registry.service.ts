@@ -156,6 +156,16 @@ export class ConnectionRegistryService
     }
   }
 
+  /**
+   * Returns a list of all currently connected engine IDs (authenticated
+   * connections only — those that have completed activation.request).
+   */
+  connectedEngineIds(): string[] {
+    return [...this.connections.values()]
+      .filter((c) => c.engineId && c.licenseId)
+      .map((c) => c.engineId as string);
+  }
+
   remove(socket: WebSocket) {
     this.connections.delete(socket);
   }

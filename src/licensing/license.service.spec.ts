@@ -30,6 +30,8 @@ function service(rpcResult: unknown = []) {
         activationKeyPepper: 'test-pepper',
       },
     }),
+    // SignalEngineSubscriberService — only availableSymbols is used in issueKey
+    { availableSymbols: ['XAUUSD'] } as never,
   );
 }
 
@@ -68,6 +70,7 @@ describe('LicenseService', () => {
         supabase: { url: 'https://example.supabase.co', serviceRoleKey: 'svc' },
         licensing: { activationKeyPepper: 'pepper' },
       }),
+      { availableSymbols: ['XAUUSD'] } as never,
     );
 
     const result = await svc.activate('TR-BADKEY', ACTIVATION_CONTEXT);
@@ -92,6 +95,7 @@ describe('LicenseService', () => {
       new ConfigService({
         licensing: { activationKeyPepper: 'pepper' },
       }),
+      { availableSymbols: ['XAUUSD'] } as never,
     );
 
     const result = await svc.activate('TR-ANYKEY', ACTIVATION_CONTEXT);

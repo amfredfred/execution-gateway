@@ -31,6 +31,9 @@
     pass: process.env.SMTP_PASS,
     from: process.env.EMAIL_FROM ?? 'Apex Quantel <noreply@apexquantel.io>',
   },
+  admin: {
+    key: process.env.GATEWAY_ADMIN_KEY,
+  },
   billing: {
     lsApiKey: process.env.LS_API_KEY,
     lsStoreId: process.env.LS_STORE_ID,
