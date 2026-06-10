@@ -30,6 +30,7 @@ const ALLOWED_COMMAND_TYPES = new Set([
 @Controller('admin')
 export class AdminController {
   private readonly adminKey: string | undefined;
+  private readonly adminEmails: string[];
   private readonly supabase?: SupabaseClient;
 
   constructor(
@@ -39,6 +40,7 @@ export class AdminController {
     config: ConfigService,
   ) {
     this.adminKey = config.get<string>('admin.key');
+    this.adminEmails = config.get<string[]>('admin.emails') ?? [];
     const url = config.get<string>('supabase.url');
     const key = config.get<string>('supabase.serviceRoleKey');
     if (url && key) {
@@ -46,6 +48,173 @@ export class AdminController {
         auth: { persistSession: false, autoRefreshToken: false },
       });
     }
+  }
+
+  // ── JWT-protected admin reads (called directly from dashboard browser) ──
+
+  /**
+   * GET /admin/me
+   * Verifies Supabase JWT and confirms the email is in ADMIN_EMAILS.
+   */
+  @Get('me')
+  async me(@Headers('authorization') auth: string | undefined) {
+    const { email } = await this.verifyAdminJwt(auth);
+    return { email, isAdmin: true };
+  }
+
+  /**
+   * GET /admin/stats
+   * Platform-wide counts: licenses by status, devices, active sessions.
+   */
+  @Get('stats')
+  async stats(@Headers('authorization') auth: string | undefined) {
+    await this.verifyAdminJwt(auth);
+    if (!this.supabase)
+      throw new InternalServerErrorException('Supabase not configured');
+
+    const [licRes, devRes, sesRes] = await Promise.all([
+      this.supabase.from('licenses').select('status'),
+      this.supabase.from('engine_devices').select('status'),
+      this.supabase
+        .from('engine_sessions')
+        .select('id', { count: 'exact', head: true })
+        .is('disconnected_at', null)
+        .gte(
+          'last_heartbeat_at',
+          new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+        ),
+    ]);
+
+    const ls = licRes.data ?? [];
+    const ds = devRes.data ?? [];
+    const byStatus = (arr: { status: string }[], s: string) =>
+      arr.filter((x) => x.status === s).length;
+
+    return {
+      licenses: {
+        total: ls.length,
+        active: byStatus(ls, 'active'),
+        suspended: byStatus(ls, 'suspended'),
+        expired: byStatus(ls, 'expired'),
+      },
+      devices: { total: ds.length, active: byStatus(ds, 'active') },
+      connectedEngines: sesRes.count ?? 0,
+    };
+  }
+
+  /**
+   * GET /admin/licenses
+   * All licenses with owner email and assigned symbols.
+   */
+  @Get('licenses')
+  async listLicenses(@Headers('authorization') auth: string | undefined) {
+    await this.verifyAdminJwt(auth);
+    if (!this.supabase)
+      throw new InternalServerErrorException('Supabase not configured');
+
+    const { data, error } = await this.supabase
+      .from('licenses')
+      .select('id, status, max_devices, expires_at, created_at, updated_at, owner_user_id')
+      .order('created_at', { ascending: false });
+
+    if (error) throw new InternalServerErrorException(error.message);
+
+    const ids = (data ?? []).map((l) => l.id);
+    const symbolMap: Record<string, string[]> = {};
+    if (ids.length) {
+      const { data: symRows } = await this.supabase
+        .from('license_symbols')
+        .select('license_id, symbol')
+        .in('license_id', ids);
+      for (const row of symRows ?? []) {
+        (symbolMap[row.license_id] ??= []).push(row.symbol as string);
+      }
+    }
+
+    const ownerIds = [...new Set((data ?? []).map((l) => l.owner_user_id))];
+    const emailMap: Record<string, string> = {};
+    await Promise.all(
+      ownerIds.map(async (uid) => {
+        const { data: u } = await this.supabase!.auth.admin.getUserById(uid);
+        if (u?.user?.email) emailMap[uid] = u.user.email;
+      }),
+    );
+
+    return (data ?? []).map((l) => ({
+      ...l,
+      owner_email: emailMap[l.owner_user_id] ?? l.owner_user_id,
+      symbols: symbolMap[l.id] ?? [],
+    }));
+  }
+
+  /**
+   * GET /admin/engines
+   * All engine devices with license info and live connection state.
+   */
+  @Get('engines')
+  async listEngines(@Headers('authorization') auth: string | undefined) {
+    await this.verifyAdminJwt(auth);
+    if (!this.supabase)
+      throw new InternalServerErrorException('Supabase not configured');
+
+    const { data: devices, error } = await this.supabase
+      .from('engine_devices')
+      .select(
+        'id, engine_id, device_name, engine_version, platform, status, activated_at, last_seen_at, license_id, licenses!inner(id, status, owner_user_id, expires_at)',
+      )
+      .order('activated_at', { ascending: false })
+      .limit(200);
+
+    if (error) throw new InternalServerErrorException(error.message);
+
+    const liveSet = new Set(this.engines.connectedEngineIds());
+
+    type LicenseJoin = { id: string; status: string; owner_user_id: string; expires_at: string | null };
+    const ownerIds = [
+      ...new Set(
+        (devices ?? [])
+          .map((d) => (d.licenses as unknown as LicenseJoin | null)?.owner_user_id)
+          .filter(Boolean) as string[],
+      ),
+    ];
+    const emailMap: Record<string, string> = {};
+    await Promise.all(
+      ownerIds.map(async (uid) => {
+        const { data: u } = await this.supabase!.auth.admin.getUserById(uid);
+        if (u?.user?.email) emailMap[uid] = u.user.email;
+      }),
+    );
+
+    const ONLINE_MS = 90_000;
+    const DEGRADED_MS = 300_000;
+    const now = Date.now();
+
+    return (devices ?? []).map((d) => {
+      const license = d.licenses as unknown as LicenseJoin | null;
+      const elapsed = now - (d.last_seen_at ? Date.parse(d.last_seen_at as string) : 0);
+      const connectionState =
+        liveSet.has(d.engine_id as string) || elapsed < ONLINE_MS
+          ? 'online'
+          : elapsed < DEGRADED_MS
+            ? 'degraded'
+            : 'offline';
+      return {
+        id: d.id,
+        engine_id: d.engine_id,
+        device_name: d.device_name,
+        engine_version: d.engine_version,
+        platform: d.platform,
+        status: d.status,
+        activated_at: d.activated_at,
+        last_seen_at: d.last_seen_at,
+        license_id: d.license_id,
+        license_status: license?.status ?? null,
+        license_expires_at: license?.expires_at ?? null,
+        owner_user_id: license?.owner_user_id ?? null,
+        owner_email: license?.owner_user_id ? (emailMap[license.owner_user_id] ?? license.owner_user_id) : null,
+        connection_state: connectionState,
+      };
+    });
   }
 
   // ── License key management ────────────────────────────────────────────
@@ -192,5 +361,20 @@ export class AdminController {
       throw new InternalServerErrorException('Admin key not configured');
     if (!key || key !== this.adminKey)
       throw new ForbiddenException('Invalid admin key');
+  }
+
+  private async verifyAdminJwt(authHeader: string | undefined): Promise<{ email: string }> {
+    const token = authHeader?.replace(/^bearer\s+/i, '').trim();
+    if (!token) throw new UnauthorizedException('Missing Authorization header');
+    if (!this.supabase) throw new InternalServerErrorException('Auth not configured');
+
+    const { data, error } = await this.supabase.auth.getUser(token);
+    if (error || !data.user) throw new UnauthorizedException('Invalid token');
+
+    const email = (data.user.email ?? '').toLowerCase();
+    if (!this.adminEmails.length || !this.adminEmails.includes(email))
+      throw new ForbiddenException('Not an admin');
+
+    return { email };
   }
 }

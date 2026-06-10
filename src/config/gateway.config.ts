@@ -43,6 +43,10 @@
   },
   admin: {
     key: process.env.GATEWAY_ADMIN_KEY,
+    emails: (process.env.ADMIN_EMAILS ?? '')
+      .split(',')
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean),
   },
   billing: {
     lsApiKey: process.env.LS_API_KEY,
