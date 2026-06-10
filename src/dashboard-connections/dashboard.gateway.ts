@@ -16,11 +16,11 @@ import { RateLimitService } from '../common/rate-limit/rate-limit.service';
 
 // ── Rate-limit constants ───────────────────────────────────────────────────
 /** Max new dashboard WS connections accepted per IP per minute. */
-const RL_DCONN_LIMIT  = 30;
+const RL_DCONN_LIMIT = 30;
 const RL_DCONN_WIN_MS = 60_000;
 
 /** Max dashboard.authenticate attempts per IP per minute. */
-const RL_DAUTH_LIMIT  = 10;
+const RL_DAUTH_LIMIT = 10;
 const RL_DAUTH_WIN_MS = 60_000;
 
 // Symbol used to stash the remote IP on the socket at connect-time.
@@ -58,7 +58,9 @@ export class DashboardGateway
     (socket as unknown as Record<symbol, string>)[IP_PROP] = ip;
 
     // Rate-limit: close immediately if this IP is flooding dashboard connections.
-    if (!this.rateLimit.check(`dash_conn:${ip}`, RL_DCONN_LIMIT, RL_DCONN_WIN_MS)) {
+    if (
+      !this.rateLimit.check(`dash_conn:${ip}`, RL_DCONN_LIMIT, RL_DCONN_WIN_MS)
+    ) {
       this.logger.warn(`Dashboard rate-limit: too many connections from ${ip}`);
       socket.close(1008, 'rate_limit_exceeded');
       return;
@@ -83,7 +85,8 @@ export class DashboardGateway
     @MessageBody() message: DashboardAuthMessage,
   ) {
     // Rate-limit before doing any crypto work on the token.
-    const ip = (socket as unknown as Record<symbol, string>)[IP_PROP] ?? 'unknown';
+    const ip =
+      (socket as unknown as Record<symbol, string>)[IP_PROP] ?? 'unknown';
     if (!this.rateLimit.check(`dauth:${ip}`, RL_DAUTH_LIMIT, RL_DAUTH_WIN_MS)) {
       this.logger.warn(`dashboard.authenticate rate-limit exceeded from ${ip}`);
       socket.close(1008, 'rate_limit_exceeded');

@@ -14,7 +14,7 @@ import { WebhookService } from './webhook.service';
 import { RateLimitService } from '../common/rate-limit/rate-limit.service';
 
 /** Max Lemon Squeezy webhook deliveries per IP per minute. */
-const RL_WH_LIMIT  = 60;
+const RL_WH_LIMIT = 60;
 const RL_WH_WIN_MS = 60_000;
 
 @Controller('webhooks')
@@ -37,7 +37,6 @@ export class WebhookController {
    */
   @Post('lemon-squeezy')
   @HttpCode(HttpStatus.OK)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async lemonSqueezy(
     @Req() req: any,
     @Body() body: unknown,
@@ -51,7 +50,10 @@ export class WebhookController {
       'unknown';
     if (!this.rateLimit.check(`wh_ls:${ip}`, RL_WH_LIMIT, RL_WH_WIN_MS)) {
       this.logger.warn(`Webhook rate-limit exceeded from ${ip}`);
-      throw new HttpException('Rate limit exceeded', HttpStatus.TOO_MANY_REQUESTS);
+      throw new HttpException(
+        'Rate limit exceeded',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
     }
 
     // Lemon Squeezy sends the raw body for signature verification.
@@ -91,11 +93,11 @@ export class WebhookController {
     }
 
     try {
-      await this.webhooks.handleEvent(payload as Parameters<WebhookService['handleEvent']>[0]);
-    } catch (err) {
-      this.logger.error(
-        `Lemon Squeezy webhook handler threw: ${String(err)}`,
+      await this.webhooks.handleEvent(
+        payload as Parameters<WebhookService['handleEvent']>[0],
       );
+    } catch (err) {
+      this.logger.error(`Lemon Squeezy webhook handler threw: ${String(err)}`);
       // Still return 200 to prevent Lemon Squeezy from retrying (errors are logged above)
     }
 

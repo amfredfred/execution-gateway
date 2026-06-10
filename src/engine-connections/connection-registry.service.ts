@@ -32,6 +32,9 @@ export class ConnectionRegistryService
 {
   private readonly logger = new Logger(ConnectionRegistryService.name);
   private readonly connections = new Map<WebSocket, EngineConnection>();
+  // BUG-12: reverse index for O(1) engineId lookups. Latest identify wins;
+  // remove() only clears the entry if it still points at the removed socket.
+  private readonly byEngineId = new Map<string, EngineConnection>();
   private readonly staleHandlers = new Set<StaleConnectionHandler>();
   private sweepTimer?: NodeJS.Timeout;
 
@@ -66,8 +69,13 @@ export class ConnectionRegistryService
   identify(socket: WebSocket, engineId: string) {
     const connection = this.connections.get(socket);
     if (!connection) return;
+    if (connection.engineId && connection.engineId !== engineId) {
+      const indexed = this.byEngineId.get(connection.engineId);
+      if (indexed === connection) this.byEngineId.delete(connection.engineId);
+    }
     connection.engineId = engineId;
     connection.lastSeenAt = new Date().toISOString();
+    this.byEngineId.set(engineId, connection);
   }
 
   engineId(socket: WebSocket) {
@@ -142,9 +150,7 @@ export class ConnectionRegistryService
    * socket is not in OPEN state.
    */
   sendToEngine(engineId: string, event: string, data: unknown): boolean {
-    const connection = [...this.connections.values()].find(
-      (c) => c.engineId === engineId && c.licenseId,
-    );
+    const connection = this.authorizedConnection(engineId);
     if (!connection || connection.socket.readyState !== WebSocket.OPEN) {
       return false;
     }
@@ -167,13 +173,22 @@ export class ConnectionRegistryService
   }
 
   remove(socket: WebSocket) {
+    const connection = this.connections.get(socket);
+    if (connection?.engineId) {
+      const indexed = this.byEngineId.get(connection.engineId);
+      if (indexed === connection) this.byEngineId.delete(connection.engineId);
+    }
     this.connections.delete(socket);
   }
 
+  /** BUG-12: O(1) lookup of the authenticated connection for an engineId. */
+  private authorizedConnection(engineId: string): EngineConnection | null {
+    const connection = this.byEngineId.get(engineId);
+    return connection?.licenseId ? connection : null;
+  }
+
   private sendExecutionMetricDemand(engineId: string, subscribed: boolean) {
-    const connection = [...this.connections.values()].find(
-      (candidate) => candidate.engineId === engineId && candidate.licenseId,
-    );
+    const connection = this.authorizedConnection(engineId);
     if (!connection || connection.socket.readyState !== WebSocket.OPEN) return;
     connection.socket.send(
       JSON.stringify({
@@ -214,7 +229,11 @@ export class ConnectionRegistryService
     // notifyStale → rooms.leave → notifySymbolsChanged → syncSubscriptions can call
     // remove() which mutates this.connections mid-iteration, and any throw would abort
     // the entire sweep silently.
-    const stale: Array<{ socket: WebSocket; engineId: string | null; reason: 'heartbeat_timeout' | 'license_expired' }> = [];
+    const stale: Array<{
+      socket: WebSocket;
+      engineId: string | null;
+      reason: 'heartbeat_timeout' | 'license_expired';
+    }> = [];
 
     for (const connection of this.connections.values()) {
       const lastSeen = Date.parse(connection.lastSeenAt);
@@ -226,7 +245,11 @@ export class ConnectionRegistryService
         this.logger.warn(
           `Engine ${connection.engineId ?? 'unidentified'} license expired; terminating connection`,
         );
-        stale.push({ socket: connection.socket, engineId: connection.engineId, reason: 'license_expired' });
+        stale.push({
+          socket: connection.socket,
+          engineId: connection.engineId,
+          reason: 'license_expired',
+        });
         continue;
       }
 
@@ -234,7 +257,11 @@ export class ConnectionRegistryService
         this.logger.warn(
           `Engine ${connection.engineId ?? 'unidentified'} heartbeat timeout; terminating connection`,
         );
-        stale.push({ socket: connection.socket, engineId: connection.engineId, reason: 'heartbeat_timeout' });
+        stale.push({
+          socket: connection.socket,
+          engineId: connection.engineId,
+          reason: 'heartbeat_timeout',
+        });
       }
     }
 

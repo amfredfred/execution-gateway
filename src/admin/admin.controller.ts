@@ -63,7 +63,8 @@ export class AdminController {
     this.verify(key);
     const result = await this.licenses.issueKeyAdmin(licenseId);
     if ('error' in result) {
-      if (result.error === 'license not found') throw new NotFoundException(result.error);
+      if (result.error === 'license not found')
+        throw new NotFoundException(result.error);
       throw new InternalServerErrorException(result.error);
     }
     return { key: result.raw };
@@ -82,7 +83,8 @@ export class AdminController {
     this.verify(key);
     const result = await this.licenses.revokeKeyAdmin(licenseId);
     if (!result.ok) {
-      if (result.error === 'license not found') throw new NotFoundException(result.error);
+      if (result.error === 'license not found')
+        throw new NotFoundException(result.error);
       throw new InternalServerErrorException(result.error);
     }
   }
@@ -100,9 +102,12 @@ export class AdminController {
     @Headers('x-admin-key') key: string | undefined,
   ) {
     this.verify(key);
-    if (!this.supabase) throw new InternalServerErrorException('Supabase not configured');
+    if (!this.supabase)
+      throw new InternalServerErrorException('Supabase not configured');
 
-    const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    const updates: Record<string, unknown> = {
+      updated_at: new Date().toISOString(),
+    };
     if (body?.status !== undefined) updates.status = body.status;
     if (body?.expires_at !== undefined) updates.expires_at = body.expires_at;
 
@@ -141,26 +146,29 @@ export class AdminController {
 
     const result = await this.commands.createAdmin(engineId, commandType);
     if (!result.ok || !result.command) {
-      if (result.error?.includes('not found')) throw new NotFoundException(result.error);
-      throw new InternalServerErrorException(result.error ?? 'Command creation failed');
+      if (result.error?.includes('not found'))
+        throw new NotFoundException(result.error);
+      throw new InternalServerErrorException(
+        result.error ?? 'Command creation failed',
+      );
     }
 
     const command = result.command;
     const delivered = this.engines.sendToEngine(engineId, commandType, {
-      command_id:   command.id,
+      command_id: command.id,
       command_type: commandType,
-      issued_at:    command.created_at,
-      expires_at:   command.expires_at,
+      issued_at: command.created_at,
+      expires_at: command.expires_at,
     });
 
     if (delivered) void this.commands.markDelivered(command.id);
 
     return {
-      command_id:   command.id,
+      command_id: command.id,
       command_type: commandType,
-      status:       delivered ? 'delivered' : 'pending',
+      status: delivered ? 'delivered' : 'pending',
       delivered,
-      expires_at:   command.expires_at,
+      expires_at: command.expires_at,
     };
   }
 
@@ -180,7 +188,9 @@ export class AdminController {
   // ── helpers ───────────────────────────────────────────────────────────
 
   private verify(key: string | undefined): void {
-    if (!this.adminKey) throw new InternalServerErrorException('Admin key not configured');
-    if (!key || key !== this.adminKey) throw new ForbiddenException('Invalid admin key');
+    if (!this.adminKey)
+      throw new InternalServerErrorException('Admin key not configured');
+    if (!key || key !== this.adminKey)
+      throw new ForbiddenException('Invalid admin key');
   }
 }

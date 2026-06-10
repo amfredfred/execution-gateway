@@ -78,20 +78,25 @@ export class CommandController {
     // Create command record in Supabase (ownership verified inside RPC)
     const result = await this.commands.create(user.id, engineId, commandType);
     if (!result.ok || !result.command) {
-      if (result.error?.includes('not found') || result.error?.includes('not owned')) {
+      if (
+        result.error?.includes('not found') ||
+        result.error?.includes('not owned')
+      ) {
         throw new ForbiddenException(result.error);
       }
-      throw new InternalServerErrorException(result.error ?? 'Command creation failed');
+      throw new InternalServerErrorException(
+        result.error ?? 'Command creation failed',
+      );
     }
 
     const command = result.command;
 
     // Deliver to the engine if it is currently connected
     const delivered = this.engines.sendToEngine(engineId, commandType, {
-      command_id:   command.id,
+      command_id: command.id,
       command_type: commandType,
-      issued_at:    command.created_at,
-      expires_at:   command.expires_at,
+      issued_at: command.created_at,
+      expires_at: command.expires_at,
     });
 
     if (delivered) {
@@ -99,12 +104,12 @@ export class CommandController {
     }
 
     return {
-      command_id:   command.id,
+      command_id: command.id,
       command_type: commandType,
-      status:       delivered ? 'delivered' : 'pending',
+      status: delivered ? 'delivered' : 'pending',
       delivered,
-      expires_at:   command.expires_at,
-      created_at:   command.created_at,
+      expires_at: command.expires_at,
+      created_at: command.created_at,
     };
   }
 
@@ -132,10 +137,12 @@ export class CommandController {
   private async resolveUser(authHeader: string | undefined): Promise<User> {
     const token = authHeader?.replace(/^bearer\s+/i, '').trim();
     if (!token) throw new UnauthorizedException('Missing Authorization header');
-    if (!this.supabase) throw new InternalServerErrorException('Auth not configured');
+    if (!this.supabase)
+      throw new InternalServerErrorException('Auth not configured');
 
     const { data, error } = await this.supabase.auth.getUser(token);
-    if (error || !data.user) throw new UnauthorizedException('Invalid or expired token');
+    if (error || !data.user)
+      throw new UnauthorizedException('Invalid or expired token');
 
     return data.user;
   }

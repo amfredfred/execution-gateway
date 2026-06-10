@@ -96,7 +96,8 @@ export class DashboardConnectionRegistryService {
       data,
     };
     this.signalEventBuffer.unshift(entry);
-    if (this.signalEventBuffer.length > 200) this.signalEventBuffer.length = 200;
+    if (this.signalEventBuffer.length > 200)
+      this.signalEventBuffer.length = 200;
     return entry;
   }
 

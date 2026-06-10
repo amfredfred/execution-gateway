@@ -20,7 +20,7 @@ import { AdminModule } from './admin/admin.module';
       isGlobal: true,
       load: [gatewayConfig],
     }),
-    RateLimitModule,   // global — injects RateLimitService everywhere
+    RateLimitModule, // global — injects RateLimitService everywhere
     ProtocolModule,
     RoomsModule,
     LicensingModule,
@@ -34,4 +34,4 @@ import { AdminModule } from './admin/admin.module';
   ],
   controllers: [AppController],
 })
-export class AppModule { }
+export class AppModule {}

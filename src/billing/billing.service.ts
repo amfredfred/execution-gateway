@@ -6,12 +6,12 @@ import { ConfigService } from '@nestjs/config';
 interface LsVariantAttributes {
   name: string;
   status: string;
-  price: number;           // smallest currency unit (e.g. kobo for NGN, cents for USD)
+  price: number; // smallest currency unit (e.g. kobo for NGN, cents for USD)
   is_subscription: boolean;
   interval: string | null; // "month" | "year" | null
   interval_count: number | null;
   has_free_trial: boolean;
-  trial_interval: string | null;       // "day" | "week" | "month" | "year" | null
+  trial_interval: string | null; // "day" | "week" | "month" | "year" | null
   trial_interval_count: number | null;
   product_id: number;
   sort: number;
@@ -56,18 +56,18 @@ interface LsStoreResponse {
 
 export interface BillingPlan {
   variantId: string;
-  planKey: string;    // "starter" | "pro" | "infrastructure"
+  planKey: string; // "starter" | "pro" | "infrastructure"
   interval: 'monthly' | 'yearly' | 'custom';
   name: string;
-  price: string;    // formatted, e.g. "₦33,000"
-  priceNote: string;    // e.g. "₦25,000/mo · ₦300,000 billed yearly"
-  currency: string;    // ISO 4217 code, e.g. "NGN"
+  price: string; // formatted, e.g. "₦33,000"
+  priceNote: string; // e.g. "₦25,000/mo · ₦300,000 billed yearly"
+  currency: string; // ISO 4217 code, e.g. "NGN"
   devices: number;
   desc: string;
   features: string[];
   highlight: boolean;
   checkoutUrl: string;
-  trialDays: number | null;  // only set for yearly plans with a trial configured in LS
+  trialDays: number | null; // only set for yearly plans with a trial configured in LS
 }
 
 // ─── Static plan metadata ──────────────────────────────────────────────────────
@@ -205,7 +205,9 @@ export class BillingService {
       this._cacheAt = Date.now();
       return plans;
     } catch (err) {
-      this.logger.error(`Failed to fetch plans from Lemon Squeezy: ${String(err)}`);
+      this.logger.error(
+        `Failed to fetch plans from Lemon Squeezy: ${String(err)}`,
+      );
       return this._cache ?? [];
     }
   }
@@ -214,31 +216,37 @@ export class BillingService {
 
   private async fetchStoreCurrency(): Promise<string> {
     if (!this.storeId) return 'USD';
-    const res = await fetch(`https://api.lemonsqueezy.com/v1/stores/${this.storeId}`, {
-      headers: {
-        Accept: 'application/vnd.api+json',
-        Authorization: `Bearer ${this.apiKey}`,
+    const res = await fetch(
+      `https://api.lemonsqueezy.com/v1/stores/${this.storeId}`,
+      {
+        headers: {
+          Accept: 'application/vnd.api+json',
+          Authorization: `Bearer ${this.apiKey}`,
+        },
       },
-    });
+    );
     if (!res.ok) {
       this.logger.warn(`Could not fetch store currency — defaulting to USD`);
       return 'USD';
     }
-    const json = await res.json() as LsStoreResponse;
+    const json = (await res.json()) as LsStoreResponse;
     return json.data?.attributes?.currency ?? 'USD';
   }
 
   private async fetchVariants(): Promise<LsVariant[]> {
-    const res = await fetch(`https://api.lemonsqueezy.com/v1/variants?page[size]=50`, {
-      headers: {
-        Accept: 'application/vnd.api+json',
-        Authorization: `Bearer ${this.apiKey}`,
+    const res = await fetch(
+      `https://api.lemonsqueezy.com/v1/variants?page[size]=50`,
+      {
+        headers: {
+          Accept: 'application/vnd.api+json',
+          Authorization: `Bearer ${this.apiKey}`,
+        },
       },
-    });
+    );
     if (!res.ok) {
       throw new Error(`LS API responded ${res.status}: ${await res.text()}`);
     }
-    const json = await res.json() as LsVariantsResponse;
+    const json = (await res.json()) as LsVariantsResponse;
     return json.data ?? [];
   }
 
@@ -257,7 +265,7 @@ export class BillingService {
       this.logger.warn(`Failed to fetch products: ${res.status}`);
       return new Map();
     }
-    const json = await res.json() as LsProductsResponse;
+    const json = (await res.json()) as LsProductsResponse;
     const map = new Map<number, LsProduct>();
     for (const p of json.data ?? []) {
       map.set(Number(p.id), p);
@@ -269,24 +277,51 @@ export class BillingService {
   // ── Trial helpers ─────────────────────────────────────────────────────────────
 
   /** Convert LS trial_interval + trial_interval_count into a flat day count. */
-  private trialToDays(interval: string | null, count: number | null): number | null {
+  private trialToDays(
+    interval: string | null,
+    count: number | null,
+  ): number | null {
     if (!interval || !count) return null;
-    const multipliers: Record<string, number> = { day: 1, week: 7, month: 30, year: 365 };
+    const multipliers: Record<string, number> = {
+      day: 1,
+      week: 7,
+      month: 30,
+      year: 365,
+    };
     const m = multipliers[interval];
     return m ? m * count : null;
   }
 
   // ── Mapping ───────────────────────────────────────────────────────────────────
 
-  private mapVariantsToPlans(variants: LsVariant[], currency: string, products: Map<number, LsProduct>): BillingPlan[] {
+  private mapVariantsToPlans(
+    variants: LsVariant[],
+    currency: string,
+    products: Map<number, LsProduct>,
+  ): BillingPlan[] {
     this.logger.debug(`LS returned ${variants.length} variants`);
     const idToMeta = new Map<string, (typeof PLAN_META)[number]>();
     const keys: Array<[string, (typeof PLAN_META)[number]]> = [
-      [this.config.get<string>('licensing.variantStarterMonthly') ?? '', PLAN_META.find(m => m.match === 'starter monthly')!],
-      [this.config.get<string>('licensing.variantStarterYearly') ?? '', PLAN_META.find(m => m.match === 'starter yearly')!],
-      [this.config.get<string>('licensing.variantProMonthly') ?? '', PLAN_META.find(m => m.match === 'pro monthly')!],
-      [this.config.get<string>('licensing.variantProYearly') ?? '', PLAN_META.find(m => m.match === 'pro yearly')!],
-      [this.config.get<string>('licensing.variantInfrastructure') ?? '', PLAN_META.find(m => m.match === 'infrastructure')!],
+      [
+        this.config.get<string>('licensing.variantStarterMonthly') ?? '',
+        PLAN_META.find((m) => m.match === 'starter monthly')!,
+      ],
+      [
+        this.config.get<string>('licensing.variantStarterYearly') ?? '',
+        PLAN_META.find((m) => m.match === 'starter yearly')!,
+      ],
+      [
+        this.config.get<string>('licensing.variantProMonthly') ?? '',
+        PLAN_META.find((m) => m.match === 'pro monthly')!,
+      ],
+      [
+        this.config.get<string>('licensing.variantProYearly') ?? '',
+        PLAN_META.find((m) => m.match === 'pro yearly')!,
+      ],
+      [
+        this.config.get<string>('licensing.variantInfrastructure') ?? '',
+        PLAN_META.find((m) => m.match === 'infrastructure')!,
+      ],
     ];
     for (const [id, meta] of keys) {
       if (id && meta) idToMeta.set(String(id), meta);
@@ -301,18 +336,28 @@ export class BillingService {
       const attrs = v.attributes;
       // For yearly plans show the per-month equivalent as the headline price
       const isYearly = attrs.interval === 'year';
-      const headlineAmount = isYearly ? Math.round(attrs.price / 12) : attrs.price;
+      const headlineAmount = isYearly
+        ? Math.round(attrs.price / 12)
+        : attrs.price;
       const price = this.formatAmount(headlineAmount, currency);
-      const priceNote = this.buildPriceNote(attrs.price, attrs.interval, attrs.interval_count, currency);
+      const priceNote = this.buildPriceNote(
+        attrs.price,
+        attrs.interval,
+        attrs.interval_count,
+        currency,
+      );
 
       const product = products.get(attrs.product_id);
       const checkoutUrl = product?.attributes.buy_now_url ?? '';
-      this.logger.debug(`Matched variant ${v.id} → ${meta.planKey}/${meta.interval} | product=${attrs.product_id} buy_now_url="${checkoutUrl}"`);
+      this.logger.debug(
+        `Matched variant ${v.id} → ${meta.planKey}/${meta.interval} | product=${attrs.product_id} buy_now_url="${checkoutUrl}"`,
+      );
 
       // Trial only surfaced for yearly plans
-      const trialDays = meta.interval === 'yearly' && attrs.has_free_trial
-        ? this.trialToDays(attrs.trial_interval, attrs.trial_interval_count)
-        : null;
+      const trialDays =
+        meta.interval === 'yearly' && attrs.has_free_trial
+          ? this.trialToDays(attrs.trial_interval, attrs.trial_interval_count)
+          : null;
 
       plans.push({
         variantId: v.id,

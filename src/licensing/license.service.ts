@@ -49,7 +49,7 @@ export class LicenseService {
     if (!this.supabase || !this.activationKeyPepper) {
       this.logger.warn(
         'Supabase activation attempted but gateway is not fully configured ' +
-        '(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, or ACTIVATION_KEY_PEPPER missing)',
+          '(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, or ACTIVATION_KEY_PEPPER missing)',
       );
       return {
         ok: false,
@@ -77,7 +77,9 @@ export class LicenseService {
     userId: string,
   ): Promise<{ raw: string } | { error: string }> {
     if (!this.supabase || !this.activationKeyPepper) {
-      return { error: 'Key issuance requires Supabase and ACTIVATION_KEY_PEPPER' };
+      return {
+        error: 'Key issuance requires Supabase and ACTIVATION_KEY_PEPPER',
+      };
     }
 
     const raw = `TR-${randomBytes(20).toString('hex').toUpperCase()}`;
@@ -89,20 +91,24 @@ export class LicenseService {
     if (symbols.length === 0) {
       this.logger.warn(
         `Key issuance for license ${licenseId}: signal engine has no available symbols — ` +
-        'ensure the signal engine is connected before issuing keys',
+          'ensure the signal engine is connected before issuing keys',
       );
-      return { error: 'Signal engine not connected — no symbols available to entitle' };
+      return {
+        error: 'Signal engine not connected — no symbols available to entitle',
+      };
     }
 
     const { error } = await this.supabase.rpc('issue_activation_key', {
-      p_license_id:    licenseId,
+      p_license_id: licenseId,
       p_owner_user_id: userId,
-      p_new_key_hash:  hash,
-      p_symbols:       symbols,
+      p_new_key_hash: hash,
+      p_symbols: symbols,
     });
 
     if (error) {
-      this.logger.warn(`Key issuance failed for license ${licenseId}: ${error.message}`);
+      this.logger.warn(
+        `Key issuance failed for license ${licenseId}: ${error.message}`,
+      );
       return { error: error.message };
     }
 
@@ -126,12 +132,14 @@ export class LicenseService {
     }
 
     const { error } = await this.supabase.rpc('revoke_license_key', {
-      p_license_id:    licenseId,
+      p_license_id: licenseId,
       p_owner_user_id: userId,
     });
 
     if (error) {
-      this.logger.warn(`Key revocation failed for license ${licenseId}: ${error.message}`);
+      this.logger.warn(
+        `Key revocation failed for license ${licenseId}: ${error.message}`,
+      );
       return { ok: false, error: error.message };
     }
 
@@ -153,7 +161,7 @@ export class LicenseService {
       .eq('id', licenseId)
       .maybeSingle();
     if (error || !data) return { error: 'license not found' };
-    return this.issueKey(licenseId, (data as { owner_user_id: string }).owner_user_id);
+    return this.issueKey(licenseId, data.owner_user_id);
   }
 
   /**
@@ -163,14 +171,15 @@ export class LicenseService {
   async revokeKeyAdmin(
     licenseId: string,
   ): Promise<{ ok: boolean; error?: string }> {
-    if (!this.supabase) return { ok: false, error: 'Supabase is not configured' };
+    if (!this.supabase)
+      return { ok: false, error: 'Supabase is not configured' };
     const { data, error } = await this.supabase
       .from('licenses')
       .select('owner_user_id')
       .eq('id', licenseId)
       .maybeSingle();
     if (error || !data) return { ok: false, error: 'license not found' };
-    return this.revokeKey(licenseId, (data as { owner_user_id: string }).owner_user_id);
+    return this.revokeKey(licenseId, data.owner_user_id);
   }
 
   /**
@@ -226,7 +235,8 @@ export class LicenseService {
     try {
       const resp = await this.supabase
         .from('engine_devices')
-        .select(`
+        .select(
+          `
           id,
           credential_hash,
           license:licenses!inner(
@@ -235,7 +245,8 @@ export class LicenseService {
             expires_at,
             entitlements:license_symbol_entitlements(symbol)
           )
-        `)
+        `,
+        )
         .eq('engine_id', engineId)
         .eq('status', 'active')
         .maybeSingle();
@@ -249,7 +260,7 @@ export class LicenseService {
         if (code === 'PGRST116') {
           this.logger.error(
             `verifyDeviceCredential: duplicate active engine_devices rows for engine_id=${engineId}. ` +
-            'Dedup required — falling back to full activation.',
+              'Dedup required — falling back to full activation.',
           );
         }
         return null;
@@ -272,15 +283,19 @@ export class LicenseService {
       // License must be active and not expired
       const lic = device.license;
       if (lic.status !== 'active') return null;
-      if (lic.expires_at && Date.parse(lic.expires_at) <= Date.now()) return null;
+      if (lic.expires_at && Date.parse(lic.expires_at) <= Date.now())
+        return null;
 
       // Constant-time HMAC comparison
-      const expected = createHmac('sha256', this.activationKeyPepper!)
+      const expected = createHmac('sha256', this.activationKeyPepper)
         .update(credential)
         .digest();
       const stored = Buffer.from(device.credential_hash, 'hex');
 
-      if (expected.length !== stored.length || !timingSafeEqual(expected, stored)) {
+      if (
+        expected.length !== stored.length ||
+        !timingSafeEqual(expected, stored)
+      ) {
         return null;
       }
 

@@ -7,11 +7,6 @@ import { SignalEngineSubscriberService } from '../signal-engine/signal-engine-su
 
 // ─── Lemon Squeezy event payload shapes (partial) ─────────────────────────────
 
-interface LsCustomer {
-  email: string;
-  name?: string;
-}
-
 interface LsOrderAttributes {
   status: string;
   customer_email: string;
@@ -59,22 +54,34 @@ const DEFAULT_MAX_DEVICES = 3;
 // Set NEXT_PUBLIC_LS_VARIANT_STARTER, _PRO, _INFRASTRUCTURE in the gateway env
 // to match the variant IDs from your Lemon Squeezy dashboard.
 // Falls back to DEFAULT_MAX_DEVICES (3) for any unrecognised variant.
-interface PlanConfig { maxDevices: number; days: number }
+interface PlanConfig {
+  maxDevices: number;
+  days: number;
+}
 
 function planConfigFromVariant(
   variantId: number | undefined,
   config: import('@nestjs/config').ConfigService,
 ): PlanConfig {
-  if (variantId === undefined) return { maxDevices: DEFAULT_MAX_DEVICES, days: DEFAULT_LICENSE_DAYS };
+  if (variantId === undefined)
+    return { maxDevices: DEFAULT_MAX_DEVICES, days: DEFAULT_LICENSE_DAYS };
 
   const v = Number(variantId);
-  const get = (key: string) => { const n = config.get<number>(key); return n ? Number(n) : undefined; };
+  const get = (key: string) => {
+    const n = config.get<number>(key);
+    return n ? Number(n) : undefined;
+  };
 
-  if (get('licensing.variantStarterMonthly') === v) return { maxDevices: 1, days: 30  };
-  if (get('licensing.variantStarterYearly')  === v) return { maxDevices: 1, days: 365 };
-  if (get('licensing.variantProMonthly')     === v) return { maxDevices: 3, days: 30  };
-  if (get('licensing.variantProYearly')      === v) return { maxDevices: 3, days: 365 };
-  if (get('licensing.variantInfrastructure') === v) return { maxDevices: 9999, days: 365 };
+  if (get('licensing.variantStarterMonthly') === v)
+    return { maxDevices: 1, days: 30 };
+  if (get('licensing.variantStarterYearly') === v)
+    return { maxDevices: 1, days: 365 };
+  if (get('licensing.variantProMonthly') === v)
+    return { maxDevices: 3, days: 30 };
+  if (get('licensing.variantProYearly') === v)
+    return { maxDevices: 3, days: 365 };
+  if (get('licensing.variantInfrastructure') === v)
+    return { maxDevices: 9999, days: 365 };
 
   return { maxDevices: DEFAULT_MAX_DEVICES, days: DEFAULT_LICENSE_DAYS };
 }
@@ -97,8 +104,11 @@ export class WebhookService {
     const key = config.get<string>('supabase.serviceRoleKey');
     this.pepper = config.get<string>('licensing.activationKeyPepper');
     this.webhookSecret = config.get<string>('webhooks.lemonSqueezySecret');
-    this.emailFrom = config.get<string>('smtp.from') ?? 'Apex Quantel <noreply@apexquantel.io>';
-    this.dashboardUrl = config.get<string>('dashboard.url') ?? 'https://app.apexquantel.io';
+    this.emailFrom =
+      config.get<string>('smtp.from') ??
+      'Apex Quantel <noreply@apexquantel.io>';
+    this.dashboardUrl =
+      config.get<string>('dashboard.url') ?? 'https://app.apexquantel.io';
 
     if (url && key) {
       this.supabase = createClient(url, key, {
@@ -117,7 +127,9 @@ export class WebhookService {
           pass: config.get<string>('smtp.pass'),
         },
       });
-      this.logger.log(`SMTP configured: ${smtpHost}:${config.get<number>('smtp.port') ?? 587}`);
+      this.logger.log(
+        `SMTP configured: ${smtpHost}:${config.get<number>('smtp.port') ?? 587}`,
+      );
     } else {
       this.logger.warn(
         'SMTP_HOST not set — activation keys will be logged to console only (dev mode)',
@@ -133,14 +145,15 @@ export class WebhookService {
    */
   verifySignature(rawBody: Buffer, signature: string): boolean {
     if (!this.webhookSecret) {
-      const isProduction = this.config.get<string>('NODE_ENV') === 'production'
-        || process.env['NODE_ENV'] === 'production';
+      const isProduction =
+        this.config.get<string>('NODE_ENV') === 'production' ||
+        process.env['NODE_ENV'] === 'production';
       if (isProduction) {
         // BUG-07: Never accept unsigned webhooks in production — forged events would
         // bypass licensing entirely. Reject hard so ops notice the misconfiguration.
         this.logger.error(
           'LEMON_SQUEEZY_WEBHOOK_SECRET is not set in production — rejecting all webhook calls. ' +
-          'Set the env var to the Lemon Squeezy signing secret immediately.',
+            'Set the env var to the Lemon Squeezy signing secret immediately.',
         );
         return false;
       }
@@ -203,7 +216,9 @@ export class WebhookService {
 
   private async handleOrderCreated(payload: LsWebhookPayload): Promise<void> {
     if (!this.supabase) {
-      this.logger.error('Supabase not configured — cannot create license from order');
+      this.logger.error(
+        'Supabase not configured — cannot create license from order',
+      );
       return;
     }
 
@@ -215,19 +230,30 @@ export class WebhookService {
     }
 
     const orderId = payload.data.id;
-    const plan    = planConfigFromVariant(attrs.first_order_item?.variant_id, this.config);
+    const plan = planConfigFromVariant(
+      attrs.first_order_item?.variant_id,
+      this.config,
+    );
     const expiresAt = this.futureIso(plan.days);
 
     // Use supabase_user_id from checkout custom data if present (pre-linked at checkout),
     // otherwise resolve/create by email.
-    const knownUserId = payload.meta.custom_data?.supabase_user_id as string | undefined;
+    const knownUserId = payload.meta.custom_data?.supabase_user_id as
+      | string
+      | undefined;
     const userId = knownUserId
-      ? await this.resolveUserById(knownUserId) ?? await this.resolveOrCreateUser(email, attrs.customer_name)
+      ? ((await this.resolveUserById(knownUserId)) ??
+        (await this.resolveOrCreateUser(email, attrs.customer_name)))
       : await this.resolveOrCreateUser(email, attrs.customer_name);
     if (!userId) return;
 
     // Insert license row
-    const licenseId = await this.createLicense(userId, expiresAt, orderId, plan.maxDevices);
+    const licenseId = await this.createLicense(
+      userId,
+      expiresAt,
+      orderId,
+      plan.maxDevices,
+    );
     if (!licenseId) return;
 
     // Issue activation key and deliver
@@ -238,27 +264,36 @@ export class WebhookService {
   // Fired when a customer starts a new subscription (distinct from order_created
   // which fires for one-time purchases). Both flows provision a license + key.
 
-  private async handleSubscriptionCreated(payload: LsWebhookPayload): Promise<void> {
+  private async handleSubscriptionCreated(
+    payload: LsWebhookPayload,
+  ): Promise<void> {
     if (!this.supabase) {
-      this.logger.error('Supabase not configured — cannot create license from subscription');
+      this.logger.error(
+        'Supabase not configured — cannot create license from subscription',
+      );
       return;
     }
 
-    const attrs  = payload.data.attributes as LsSubscriptionAttributes;
-    const email  = attrs.customer_email || attrs.user_email;
+    const attrs = payload.data.attributes as LsSubscriptionAttributes;
+    const email = attrs.customer_email || attrs.user_email;
     if (!email) {
       this.logger.error('subscription_created: no customer email in payload');
       return;
     }
 
-    const plan      = planConfigFromVariant(attrs.variant_id, this.config);
+    const plan = planConfigFromVariant(attrs.variant_id, this.config);
     const expiresAt = attrs.renews_at
-      ? new Date(new Date(attrs.renews_at).getTime() + plan.days * 86_400_000).toISOString()
+      ? new Date(
+          new Date(attrs.renews_at).getTime() + plan.days * 86_400_000,
+        ).toISOString()
       : this.futureIso(plan.days);
 
-    const knownUserId = payload.meta.custom_data?.supabase_user_id as string | undefined;
+    const knownUserId = payload.meta.custom_data?.supabase_user_id as
+      | string
+      | undefined;
     const userId = knownUserId
-      ? await this.resolveUserById(knownUserId) ?? await this.resolveOrCreateUser(email, attrs.user_name)
+      ? ((await this.resolveUserById(knownUserId)) ??
+        (await this.resolveOrCreateUser(email, attrs.user_name)))
       : await this.resolveOrCreateUser(email, attrs.user_name);
     if (!userId) return;
 
@@ -278,7 +313,12 @@ export class WebhookService {
       return;
     }
 
-    const licenseId = await this.createLicense(userId, expiresAt, payload.data.id, plan.maxDevices);
+    const licenseId = await this.createLicense(
+      userId,
+      expiresAt,
+      payload.data.id,
+      plan.maxDevices,
+    );
     if (!licenseId) return;
 
     await this.issueAndDeliverKey(licenseId, userId, email);
@@ -286,7 +326,9 @@ export class WebhookService {
 
   // ── Subscription renewed → extend expiry ──────────────────────────────────
 
-  private async handleSubscriptionRenewed(payload: LsWebhookPayload): Promise<void> {
+  private async handleSubscriptionRenewed(
+    payload: LsWebhookPayload,
+  ): Promise<void> {
     if (!this.supabase) return;
 
     const attrs = payload.data.attributes as LsSubscriptionAttributes;
@@ -298,7 +340,8 @@ export class WebhookService {
 
     const newExpiresAt = attrs.renews_at
       ? new Date(
-          new Date(attrs.renews_at).getTime() + DEFAULT_LICENSE_DAYS * 86_400_000,
+          new Date(attrs.renews_at).getTime() +
+            DEFAULT_LICENSE_DAYS * 86_400_000,
         ).toISOString()
       : this.futureIso(DEFAULT_LICENSE_DAYS);
 
@@ -313,7 +356,9 @@ export class WebhookService {
       .limit(1);
 
     if (selectErr || !licenses?.length) {
-      this.logger.warn(`Subscription renewed: no active license found for ${email}`);
+      this.logger.warn(
+        `Subscription renewed: no active license found for ${email}`,
+      );
       return;
     }
 
@@ -327,11 +372,16 @@ export class WebhookService {
     const licenseId = licenses[0].id as string;
     const { error } = await this.supabase
       .from('licenses')
-      .update({ expires_at: newExpiresAt, updated_at: new Date().toISOString() })
+      .update({
+        expires_at: newExpiresAt,
+        updated_at: new Date().toISOString(),
+      })
       .eq('id', licenseId);
 
     if (error) {
-      this.logger.error(`Subscription renewed: failed to extend license ${licenseId} — ${error.message}`);
+      this.logger.error(
+        `Subscription renewed: failed to extend license ${licenseId} — ${error.message}`,
+      );
       return;
     }
 
@@ -342,7 +392,9 @@ export class WebhookService {
 
   // ── Subscription cancelled/expired → suspend license ─────────────────────
 
-  private async handleSubscriptionEnded(payload: LsWebhookPayload): Promise<void> {
+  private async handleSubscriptionEnded(
+    payload: LsWebhookPayload,
+  ): Promise<void> {
     if (!this.supabase) return;
 
     const attrs = payload.data.attributes as LsSubscriptionAttributes;
@@ -363,14 +415,16 @@ export class WebhookService {
       .eq('status', 'active');
 
     if (error) {
-      this.logger.error(`Subscription ended: failed to suspend license — ${error.message}`);
+      this.logger.error(
+        `Subscription ended: failed to suspend license — ${error.message}`,
+      );
       return;
     }
 
     this.logger.log(`Subscription ended: suspended license for ${email}`);
   }
 
-  // ── Payment failed → log only (LS will retry) ─────────────────────────────
+  // ── Payment failed → notify customer (LS will retry) ──────────────────────
 
   private async handlePaymentFailed(payload: LsWebhookPayload): Promise<void> {
     const attrs = payload.data.attributes as LsSubscriptionAttributes;
@@ -379,16 +433,27 @@ export class WebhookService {
     // active during the retry window.  We log prominently so ops can monitor.
     this.logger.warn(
       `\n${'─'.repeat(70)}\n` +
-      `  PAYMENT FAILED — customer: ${email}\n` +
-      `  Subscription ID : ${payload.data.id}\n` +
-      `  LS will retry automatically. License left active.\n` +
-      `${'─'.repeat(70)}`,
+        `  PAYMENT FAILED — customer: ${email}\n` +
+        `  Subscription ID : ${payload.data.id}\n` +
+        `  LS will retry automatically. License left active.\n` +
+        `${'─'.repeat(70)}`,
     );
+
+    // BUG-16: tell the customer now, while the retry window is still open,
+    // instead of letting them discover it when the subscription is cancelled.
+    if (email !== '(unknown)') {
+      await this.sendPaymentFailedEmail(
+        email,
+        attrs.user_name || email.split('@')[0],
+      );
+    }
   }
 
   // ── Subscription resumed / unpaused → reactivate license ──────────────────
 
-  private async handleSubscriptionResumed(payload: LsWebhookPayload): Promise<void> {
+  private async handleSubscriptionResumed(
+    payload: LsWebhookPayload,
+  ): Promise<void> {
     if (!this.supabase) return;
 
     const attrs = payload.data.attributes as LsSubscriptionAttributes;
@@ -400,7 +465,8 @@ export class WebhookService {
 
     const newExpiresAt = attrs.renews_at
       ? new Date(
-          new Date(attrs.renews_at).getTime() + DEFAULT_LICENSE_DAYS * 86_400_000,
+          new Date(attrs.renews_at).getTime() +
+            DEFAULT_LICENSE_DAYS * 86_400_000,
         ).toISOString()
       : this.futureIso(DEFAULT_LICENSE_DAYS);
 
@@ -409,24 +475,34 @@ export class WebhookService {
     // customer would have an active license but no usable key without this step.
     const { data: updated, error } = await this.supabase
       .from('licenses')
-      .update({ status: 'active', expires_at: newExpiresAt, updated_at: new Date().toISOString() })
+      .update({
+        status: 'active',
+        expires_at: newExpiresAt,
+        updated_at: new Date().toISOString(),
+      })
       .eq('owner_user_id', userId)
       .eq('status', 'suspended')
       .select('id')
       .limit(1);
 
     if (error) {
-      this.logger.error(`Subscription resumed: failed to reactivate license for ${email} — ${error.message}`);
+      this.logger.error(
+        `Subscription resumed: failed to reactivate license for ${email} — ${error.message}`,
+      );
       return;
     }
 
     if (!updated?.length) {
-      this.logger.warn(`Subscription resumed: no suspended license found for ${email} — nothing to reactivate`);
+      this.logger.warn(
+        `Subscription resumed: no suspended license found for ${email} — nothing to reactivate`,
+      );
       return;
     }
 
     const licenseId = updated[0].id as string;
-    this.logger.log(`Subscription resumed: reactivated license ${licenseId} for ${email}`);
+    this.logger.log(
+      `Subscription resumed: reactivated license ${licenseId} for ${email}`,
+    );
 
     // Re-issue a fresh activation key — the previous one was cleared on suspension.
     await this.issueAndDeliverKey(licenseId, userId, email);
@@ -462,7 +538,9 @@ export class WebhookService {
       .eq('status', 'active');
 
     if (error) {
-      this.logger.error(`Plan changed: failed to update license for ${email} — ${error.message}`);
+      this.logger.error(
+        `Plan changed: failed to update license for ${email} — ${error.message}`,
+      );
       return;
     }
 
@@ -494,7 +572,9 @@ export class WebhookService {
       .eq('status', 'active');
 
     if (error) {
-      this.logger.error(`Order refunded: failed to suspend license for ${email} — ${error.message}`);
+      this.logger.error(
+        `Order refunded: failed to suspend license for ${email} — ${error.message}`,
+      );
       return;
     }
 
@@ -519,7 +599,9 @@ export class WebhookService {
     });
 
     if (error || !data.user) {
-      this.logger.error(`Failed to create Supabase user for ${email}: ${error?.message}`);
+      this.logger.error(
+        `Failed to create Supabase user for ${email}: ${error?.message}`,
+      );
       return null;
     }
 
@@ -535,8 +617,10 @@ export class WebhookService {
 
   private async resolveUserId(email: string): Promise<string | null> {
     // supabase-js v2 PageParams type omits `filter`, but GoTrue admin API supports it.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await this.supabase!.auth.admin.listUsers({ filter: `email.eq.${email}` } as any);
+    const params = { filter: `email.eq.${email}` } as unknown as Parameters<
+      SupabaseClient['auth']['admin']['listUsers']
+    >[0];
+    const { data, error } = await this.supabase!.auth.admin.listUsers(params);
     if (error || !data) return null;
     return data.users[0]?.id ?? null;
   }
@@ -547,8 +631,7 @@ export class WebhookService {
     orderId: string,
     maxDevices: number = DEFAULT_MAX_DEVICES,
   ): Promise<string | null> {
-    const { data, error } = await this.supabase!
-      .from('licenses')
+    const { data, error } = await this.supabase!.from('licenses')
       .insert({
         owner_user_id: ownerUserId,
         activation_key_hash: '', // will be updated by issueKey
@@ -580,7 +663,9 @@ export class WebhookService {
     email: string,
   ): Promise<void> {
     if (!this.pepper) {
-      this.logger.error('ACTIVATION_KEY_PEPPER not configured — cannot issue key');
+      this.logger.error(
+        'ACTIVATION_KEY_PEPPER not configured — cannot issue key',
+      );
       return;
     }
 
@@ -591,16 +676,16 @@ export class WebhookService {
     if (symbols.length === 0) {
       this.logger.error(
         `Cannot issue key for license ${licenseId}: signal engine has no available symbols. ` +
-        'Ensure the signal engine is connected before processing orders.',
+          'Ensure the signal engine is connected before processing orders.',
       );
       return;
     }
 
     const { error } = await this.supabase!.rpc('issue_activation_key', {
-      p_license_id:    licenseId,
+      p_license_id: licenseId,
       p_owner_user_id: userId,
-      p_new_key_hash:  hash,
-      p_symbols:       symbols,
+      p_new_key_hash: hash,
+      p_symbols: symbols,
     });
 
     if (error) {
@@ -611,7 +696,12 @@ export class WebhookService {
     }
 
     // ── Deliver the key ──────────────────────────────────────────────────────
-    await this.sendActivationKeyEmail(email, email.split('@')[0], raw, licenseId);
+    await this.sendActivationKeyEmail(
+      email,
+      email.split('@')[0],
+      raw,
+      licenseId,
+    );
   }
 
   // ── Email delivery ─────────────────────────────────────────────────────────
@@ -643,19 +733,102 @@ export class WebhookService {
     const text = this.buildActivationEmailText(name, rawKey, licenseId);
 
     try {
-      const info = await this.mailer.sendMail({
+      const info = (await this.mailer.sendMail({
         from: this.emailFrom,
         to,
         subject,
         html,
         text,
-      });
-      this.logger.log(`Activation key email sent to ${to} — messageId: ${info.messageId}`);
+      })) as { messageId?: string };
+      this.logger.log(
+        `Activation key email sent to ${to} — messageId: ${info.messageId}`,
+      );
     } catch (err) {
       // Email failure must NOT block the flow — key is already stored in Supabase.
       // Customer can retrieve it from the dashboard; log the error for ops visibility.
       this.logger.error(
         `Failed to send activation key email to ${to}: ${String(err)}`,
+      );
+    }
+  }
+
+  private async sendPaymentFailedEmail(
+    to: string,
+    name: string,
+  ): Promise<void> {
+    if (!this.mailer) {
+      this.logger.warn(
+        `SMTP not configured — payment-failed notice for ${to} logged only`,
+      );
+      return;
+    }
+
+    const billingUrl = `${this.dashboardUrl}/app/billing`;
+    const text = [
+      `Hi ${name},`,
+      '',
+      'We could not process the latest payment for your Apex Quantel subscription.',
+      'Your license remains active for now, and we will retry the charge automatically.',
+      '',
+      'To avoid any interruption to signal execution, please update your payment',
+      `method here: ${billingUrl}`,
+      '',
+      'If the retries keep failing, the subscription will be cancelled and your',
+      'engine will stop receiving signals.',
+      '',
+      '— Apex Quantel',
+    ].join('\n');
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8" /><title>Payment failed</title></head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:40px 16px;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08);">
+        <tr>
+          <td style="background:#0f172a;padding:24px 32px;">
+            <span style="color:#f1f5f9;font-size:20px;font-weight:700;letter-spacing:-0.02em;">Apex Quantel</span>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:32px;">
+            <h1 style="margin:0 0 8px;color:#0f172a;font-size:22px;font-weight:700;">We couldn't process your payment</h1>
+            <p style="margin:0 0 24px;color:#475569;font-size:15px;line-height:1.6;">
+              Hi ${name}, the latest charge for your subscription failed. Your license is still
+              active and we'll retry the payment automatically — but if the retries keep failing,
+              the subscription will be cancelled and your engine will stop receiving signals.
+            </p>
+            <a href="${billingUrl}"
+               style="display:inline-block;background:#3b82f6;color:#ffffff;text-decoration:none;padding:11px 22px;border-radius:6px;font-size:14px;font-weight:600;">
+              Update payment method &rarr;
+            </a>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:16px 32px;border-top:1px solid #e2e8f0;">
+            <p style="margin:0;color:#94a3b8;font-size:12px;">Sent to ${to}</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+    try {
+      const info = (await this.mailer.sendMail({
+        from: this.emailFrom,
+        to,
+        subject: 'Action needed: your Apex Quantel payment failed',
+        html,
+        text,
+      })) as { messageId?: string };
+      this.logger.log(
+        `Payment-failed email sent to ${to} — messageId: ${info.messageId}`,
+      );
+    } catch (err) {
+      this.logger.error(
+        `Failed to send payment-failed email to ${to}: ${String(err)}`,
       );
     }
   }

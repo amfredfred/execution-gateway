@@ -78,6 +78,90 @@ describe('ConnectionRegistryService TTL cap', () => {
   });
 });
 
+describe('ConnectionRegistryService sendToEngine (BUG-12 reverse index)', () => {
+  function openSocket(): { socket: WebSocket; send: jest.Mock } {
+    const send = jest.fn();
+    const socket = { readyState: WebSocket.OPEN, send } as unknown as WebSocket;
+    return { socket, send };
+  }
+
+  it('delivers to the identified, authorized engine socket', () => {
+    const connections = service();
+    const { socket, send } = openSocket();
+    connections.add(socket);
+    connections.identify(socket, 'engine-001');
+    connections.authorize(socket, 'license-001', 'device-001', new Set(), null);
+
+    expect(connections.sendToEngine('engine-001', 'command.pause', {})).toBe(
+      true,
+    );
+    expect(send).toHaveBeenCalledWith(
+      JSON.stringify({ event: 'command.pause', data: {} }),
+    );
+  });
+
+  it('refuses delivery to an identified but unauthorized engine', () => {
+    const connections = service();
+    const { socket } = openSocket();
+    connections.add(socket);
+    connections.identify(socket, 'engine-001');
+
+    expect(connections.sendToEngine('engine-001', 'command.pause', {})).toBe(
+      false,
+    );
+  });
+
+  it('routes to the newest socket after a reconnect with the same engineId', () => {
+    const connections = service();
+    const old = openSocket();
+    const fresh = openSocket();
+    connections.add(old.socket);
+    connections.identify(old.socket, 'engine-001');
+    connections.authorize(
+      old.socket,
+      'license-001',
+      'device-001',
+      new Set(),
+      null,
+    );
+
+    connections.add(fresh.socket);
+    connections.identify(fresh.socket, 'engine-001');
+    connections.authorize(
+      fresh.socket,
+      'license-001',
+      'device-001',
+      new Set(),
+      null,
+    );
+
+    expect(connections.sendToEngine('engine-001', 'command.pause', {})).toBe(
+      true,
+    );
+    expect(fresh.send).toHaveBeenCalled();
+    expect(old.send).not.toHaveBeenCalled();
+
+    // Removing the stale old socket must not unindex the live one.
+    connections.remove(old.socket);
+    expect(connections.sendToEngine('engine-001', 'command.resume', {})).toBe(
+      true,
+    );
+  });
+
+  it('returns false after the engine socket is removed', () => {
+    const connections = service();
+    const { socket } = openSocket();
+    connections.add(socket);
+    connections.identify(socket, 'engine-001');
+    connections.authorize(socket, 'license-001', 'device-001', new Set(), null);
+    connections.remove(socket);
+
+    expect(connections.sendToEngine('engine-001', 'command.pause', {})).toBe(
+      false,
+    );
+  });
+});
+
 describe('ConnectionRegistryService stale sweep', () => {
   it('fires stale handler for heartbeat-timeout connection', () => {
     jest.useFakeTimers();

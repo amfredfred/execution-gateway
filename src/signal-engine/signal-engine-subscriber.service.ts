@@ -117,7 +117,8 @@ export class SignalEngineSubscriberService
 
       // Signal engine handshake — capture the symbols it trades.
       if (event === 'connected' && message.payload) {
-        const raw = (message.payload as Record<string, unknown>).supported_symbols;
+        const raw = (message.payload as Record<string, unknown>)
+          .supported_symbols;
         if (Array.isArray(raw)) {
           this._availableSymbols = (raw as unknown[])
             .filter((s): s is string => typeof s === 'string')

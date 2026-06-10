@@ -19,7 +19,7 @@ import { LicenseService } from './license.service';
 import { RateLimitService } from '../common/rate-limit/rate-limit.service';
 
 /** Max key-issuance requests per IP per hour (manual action — very low). */
-const RL_KEY_LIMIT  = 5;
+const RL_KEY_LIMIT = 5;
 const RL_KEY_WIN_MS = 3_600_000;
 
 @Controller('licenses')
@@ -56,19 +56,24 @@ export class LicenseController {
   async issueKey(
     @Param('id') licenseId: string,
     @Headers('authorization') authHeader: string | undefined,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     @Req() req: any,
   ): Promise<{ key: string }> {
     const ip = this.clientIp(req);
     if (!this.rateLimit.check(`key_issue:${ip}`, RL_KEY_LIMIT, RL_KEY_WIN_MS)) {
-      throw new HttpException('Rate limit exceeded', HttpStatus.TOO_MANY_REQUESTS);
+      throw new HttpException(
+        'Rate limit exceeded',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
     }
     const user = await this.resolveUser(authHeader);
     const result = await this.licenses.issueKey(licenseId, user.id);
 
     if ('error' in result) {
-      if (result.error === 'license not found') throw new NotFoundException(result.error);
-      if (result.error === 'forbidden') throw new ForbiddenException(result.error);
+      if (result.error === 'license not found')
+        throw new NotFoundException(result.error);
+      if (result.error === 'forbidden')
+        throw new ForbiddenException(result.error);
       throw new InternalServerErrorException(result.error);
     }
 
@@ -96,15 +101,16 @@ export class LicenseController {
     const result = await this.licenses.revokeKey(licenseId, user.id);
 
     if (!result.ok) {
-      if (result.error === 'license not found') throw new NotFoundException(result.error);
-      if (result.error === 'forbidden') throw new ForbiddenException(result.error);
+      if (result.error === 'license not found')
+        throw new NotFoundException(result.error);
+      if (result.error === 'forbidden')
+        throw new ForbiddenException(result.error);
       throw new InternalServerErrorException(result.error);
     }
   }
 
   // ── helpers ──────────────────────────────────────────────────────────────
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private clientIp(req: any): string {
     const forwarded = req.headers['x-forwarded-for'];
     return (
@@ -117,10 +123,12 @@ export class LicenseController {
   private async resolveUser(authHeader: string | undefined): Promise<User> {
     const token = authHeader?.replace(/^bearer\s+/i, '').trim();
     if (!token) throw new UnauthorizedException('Missing Authorization header');
-    if (!this.supabase) throw new InternalServerErrorException('Auth not configured');
+    if (!this.supabase)
+      throw new InternalServerErrorException('Auth not configured');
 
     const { data, error } = await this.supabase.auth.getUser(token);
-    if (error || !data.user) throw new UnauthorizedException('Invalid or expired token');
+    if (error || !data.user)
+      throw new UnauthorizedException('Invalid or expired token');
 
     return data.user;
   }

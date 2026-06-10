@@ -20,7 +20,7 @@ export class RateLimitService {
   private readonly windows = new Map<string, number[]>();
 
   private static readonly SWEEP_INTERVAL_MS = 60_000;
-  private static readonly SWEEP_MAX_AGE_MS  = 3_600_000; // 1 hour
+  private static readonly SWEEP_MAX_AGE_MS = 3_600_000; // 1 hour
 
   constructor() {
     const timer = setInterval(

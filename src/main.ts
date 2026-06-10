@@ -5,7 +5,10 @@ import { AppModule } from './app.module';
 
 async function bootstrap() {
   // rawBody: true enables req.rawBody for webhook signature verification.
-  const app = await NestFactory.create(AppModule, { rawBody: true, logger: ['error', 'warn', 'log'] });
+  const app = await NestFactory.create(AppModule, {
+    rawBody: true,
+    logger: ['error', 'warn', 'log'],
+  });
   const config = app.get(ConfigService);
 
   // Allow the customer dashboard origin to call HTTP endpoints.
@@ -18,7 +21,10 @@ async function bootstrap() {
     corsRaw === '*'
       ? '*'
       : corsRaw.includes(',')
-        ? corsRaw.split(',').map((s) => s.trim()).filter(Boolean)
+        ? corsRaw
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
         : corsRaw;
   app.enableCors({
     origin: corsOrigin,

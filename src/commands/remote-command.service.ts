@@ -1,4 +1,9 @@
-import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleInit,
+  OnModuleDestroy,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
@@ -70,9 +75,12 @@ export class RemoteCommandService implements OnModuleInit, OnModuleDestroy {
     }
 
     const row = (data as CommandRecord[] | null)?.[0];
-    if (!row) return { ok: false, error: 'Command creation returned no result' };
+    if (!row)
+      return { ok: false, error: 'Command creation returned no result' };
 
-    this.logger.log(`Command ${row.id} (${commandType}) created for engine ${engineId}`);
+    this.logger.log(
+      `Command ${row.id} (${commandType}) created for engine ${engineId}`,
+    );
     return { ok: true, command: row };
   }
 
@@ -86,7 +94,8 @@ export class RemoteCommandService implements OnModuleInit, OnModuleDestroy {
     commandType: string,
     expiresInSeconds = 30,
   ): Promise<CommandResult> {
-    if (!this.supabase) return { ok: false, error: 'Supabase is not configured' };
+    if (!this.supabase)
+      return { ok: false, error: 'Supabase is not configured' };
 
     const { data: device, error: devErr } = await this.supabase
       .from('engine_devices')
@@ -100,8 +109,11 @@ export class RemoteCommandService implements OnModuleInit, OnModuleDestroy {
     }
 
     const ownerUserId =
-      (device as { licenses?: { owner_user_id?: string } }).licenses?.owner_user_id ?? null;
-    const expiresAt = new Date(Date.now() + expiresInSeconds * 1000).toISOString();
+      (device as { licenses?: { owner_user_id?: string } }).licenses
+        ?.owner_user_id ?? null;
+    const expiresAt = new Date(
+      Date.now() + expiresInSeconds * 1000,
+    ).toISOString();
 
     const { data, error } = await this.supabase
       .from('remote_commands')
@@ -120,8 +132,10 @@ export class RemoteCommandService implements OnModuleInit, OnModuleDestroy {
       return { ok: false, error: error?.message ?? 'Insert failed' };
     }
 
-    const row = data as CommandRecord;
-    this.logger.log(`Admin command ${row.id} (${commandType}) created for engine ${engineId}`);
+    const row = data;
+    this.logger.log(
+      `Admin command ${row.id} (${commandType}) created for engine ${engineId}`,
+    );
     return { ok: true, command: row };
   }
 
@@ -151,7 +165,9 @@ export class RemoteCommandService implements OnModuleInit, OnModuleDestroy {
       p_result: result,
     });
     if (error) {
-      this.logger.warn(`Failed to update command ${commandId} status: ${error.message}`);
+      this.logger.warn(
+        `Failed to update command ${commandId} status: ${error.message}`,
+      );
     } else {
       this.logger.log(`Command ${commandId} marked ${status}`);
     }
@@ -168,12 +184,14 @@ export class RemoteCommandService implements OnModuleInit, OnModuleDestroy {
     if (!this.supabase) return null;
     const { data, error } = await this.supabase
       .from('remote_commands')
-      .select('id,engine_device_id,command_type,status,expires_at,created_at,delivered_at,completed_at,result')
+      .select(
+        'id,engine_device_id,command_type,status,expires_at,created_at,delivered_at,completed_at,result',
+      )
       .eq('id', commandId)
       .eq('owner_user_id', ownerUserId)
       .maybeSingle();
     if (error || !data) return null;
-    return data as CommandRecord;
+    return data;
   }
 
   /**
@@ -187,12 +205,14 @@ export class RemoteCommandService implements OnModuleInit, OnModuleDestroy {
     if (!this.supabase) return [];
     const { data } = await this.supabase
       .from('remote_commands')
-      .select('id,engine_device_id,command_type,status,expires_at,created_at,delivered_at,completed_at,result')
+      .select(
+        'id,engine_device_id,command_type,status,expires_at,created_at,delivered_at,completed_at,result',
+      )
       .eq('owner_user_id', ownerUserId)
       .eq('engine_device_id', engineDeviceId)
       .order('created_at', { ascending: false })
       .limit(limit);
-    return (data ?? []) as CommandRecord[];
+    return data ?? [];
   }
 
   private async sweepExpired() {

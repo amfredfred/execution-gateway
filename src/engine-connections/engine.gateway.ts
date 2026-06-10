@@ -25,15 +25,15 @@ import { RateLimitService } from '../common/rate-limit/rate-limit.service';
 
 // ── Rate-limit constants ───────────────────────────────────────────────────
 /** Max new engine WS connections accepted per IP per minute. */
-const RL_CONNECT_LIMIT  = 20;
+const RL_CONNECT_LIMIT = 20;
 const RL_CONNECT_WIN_MS = 60_000;
 
 /** Max activation.request attempts per IP in a 10-minute window. */
-const RL_ACT_IP_LIMIT  = 5;
+const RL_ACT_IP_LIMIT = 5;
 const RL_ACT_IP_WIN_MS = 600_000;
 
 /** Max activation.request attempts per (hashed) key in a 10-minute window. */
-const RL_ACT_KEY_LIMIT  = 3;
+const RL_ACT_KEY_LIMIT = 3;
 const RL_ACT_KEY_WIN_MS = 600_000;
 
 // Symbol used to stash the remote IP on the socket object at connect-time.
@@ -88,7 +88,13 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     (socket as unknown as Record<symbol, string>)[IP_PROP] = ip;
 
     // Rate-limit: close immediately if this IP is hammering connections.
-    if (!this.rateLimit.check(`eng_conn:${ip}`, RL_CONNECT_LIMIT, RL_CONNECT_WIN_MS)) {
+    if (
+      !this.rateLimit.check(
+        `eng_conn:${ip}`,
+        RL_CONNECT_LIMIT,
+        RL_CONNECT_WIN_MS,
+      )
+    ) {
       this.logger.warn(`Engine rate-limit: too many connections from ${ip}`);
       socket.close(1008, 'rate_limit_exceeded');
       return;
@@ -150,8 +156,8 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
         // Rotate the credential on every successful fast-path activation
         const rawCred = result.activation.engineDeviceId
           ? await this.licenses.issueDeviceCredential(
-            result.activation.engineDeviceId,
-          )
+              result.activation.engineDeviceId,
+            )
           : null;
         this.logger.log(`Engine ${engineId}: fast-path credential activation`);
         return {
@@ -209,16 +215,29 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return this.rejected(message.message_id, ['engine.hello required']);
 
     // ── Rate-limit: per-IP ────────────────────────────────────────────────
-    const ip = (socket as unknown as Record<symbol, string>)[IP_PROP] ?? 'unknown';
-    if (!this.rateLimit.check(`act_ip:${ip}`, RL_ACT_IP_LIMIT, RL_ACT_IP_WIN_MS)) {
-      this.logger.warn(`activation.request rate-limit (IP) exceeded from ${ip}`);
+    const ip =
+      (socket as unknown as Record<symbol, string>)[IP_PROP] ?? 'unknown';
+    if (
+      !this.rateLimit.check(`act_ip:${ip}`, RL_ACT_IP_LIMIT, RL_ACT_IP_WIN_MS)
+    ) {
+      this.logger.warn(
+        `activation.request rate-limit (IP) exceeded from ${ip}`,
+      );
       return this.rejected(message.message_id, ['rate_limit_exceeded']);
     }
 
     // ── Rate-limit: per key (prevents brute-force across connections) ─────
     const rawKey = String(accepted.message.payload.activation_key ?? '');
-    if (!this.rateLimit.check(keyBucket(rawKey), RL_ACT_KEY_LIMIT, RL_ACT_KEY_WIN_MS)) {
-      this.logger.warn(`activation.request rate-limit (key) exceeded from ${ip}`);
+    if (
+      !this.rateLimit.check(
+        keyBucket(rawKey),
+        RL_ACT_KEY_LIMIT,
+        RL_ACT_KEY_WIN_MS,
+      )
+    ) {
+      this.logger.warn(
+        `activation.request rate-limit (key) exceeded from ${ip}`,
+      );
       return this.rejected(message.message_id, ['rate_limit_exceeded']);
     }
 
@@ -251,7 +270,9 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
     // 1.16 — Issue a device credential so the engine can fast-path reconnect
     const rawCred = result.activation.engineDeviceId
-      ? await this.licenses.issueDeviceCredential(result.activation.engineDeviceId)
+      ? await this.licenses.issueDeviceCredential(
+          result.activation.engineDeviceId,
+        )
       : null;
     return {
       event: 'activation.accepted',
@@ -336,8 +357,7 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const eventType = String(
       payload.event_type ?? payload.type ?? payload.event ?? 'unknown',
     );
-    const data: unknown =
-      payload.data !== undefined ? payload.data : payload;
+    const data: unknown = payload.data !== undefined ? payload.data : payload;
 
     this.dashboards.pushEngineEvent(engineId, eventType, data);
 
@@ -354,7 +374,9 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {
     const accepted = this.accept('room.subscribe', message);
     if (!accepted.ok) {
-      this.logger.warn(`room.subscribe rejected (validation): ${JSON.stringify(accepted.response)}`);
+      this.logger.warn(
+        `room.subscribe rejected (validation): ${JSON.stringify(accepted.response)}`,
+      );
       return accepted.response;
     }
 
