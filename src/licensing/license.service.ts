@@ -206,7 +206,21 @@ export class LicenseService {
         .eq('status', 'active')
         .maybeSingle();
 
-      if (resp.error || !resp.data) return null;
+      // BUG-13: .maybeSingle() returns error code PGRST116 when multiple rows
+      // match — indicates duplicate active device rows for this engine_id (missing
+      // unique constraint).  Log prominently so the inconsistency is visible, then
+      // fall back to full activation.request so the engine is not silently blocked.
+      if (resp.error) {
+        const code = (resp.error as unknown as { code?: string }).code;
+        if (code === 'PGRST116') {
+          this.logger.error(
+            `verifyDeviceCredential: duplicate active engine_devices rows for engine_id=${engineId}. ` +
+            'Dedup required — falling back to full activation.',
+          );
+        }
+        return null;
+      }
+      if (!resp.data) return null;
 
       const device = resp.data as unknown as {
         id: string;

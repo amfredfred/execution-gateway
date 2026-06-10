@@ -200,6 +200,12 @@ export class ConnectionRegistryService
     const offlineAfterMs =
       this.config.get<number>('connections.offlineAfterSeconds', 90) * 1000;
 
+    // BUG-10: Collect stale entries first, then process outside the Map iterator.
+    // notifyStale → rooms.leave → notifySymbolsChanged → syncSubscriptions can call
+    // remove() which mutates this.connections mid-iteration, and any throw would abort
+    // the entire sweep silently.
+    const stale: Array<{ socket: WebSocket; engineId: string | null; reason: 'heartbeat_timeout' | 'license_expired' }> = [];
+
     for (const connection of this.connections.values()) {
       const lastSeen = Date.parse(connection.lastSeenAt);
 
@@ -210,11 +216,7 @@ export class ConnectionRegistryService
         this.logger.warn(
           `Engine ${connection.engineId ?? 'unidentified'} license expired; terminating connection`,
         );
-        this.notifyStale(
-          connection.socket,
-          connection.engineId,
-          'license_expired',
-        );
+        stale.push({ socket: connection.socket, engineId: connection.engineId, reason: 'license_expired' });
         continue;
       }
 
@@ -222,10 +224,16 @@ export class ConnectionRegistryService
         this.logger.warn(
           `Engine ${connection.engineId ?? 'unidentified'} heartbeat timeout; terminating connection`,
         );
-        this.notifyStale(
-          connection.socket,
-          connection.engineId,
-          'heartbeat_timeout',
+        stale.push({ socket: connection.socket, engineId: connection.engineId, reason: 'heartbeat_timeout' });
+      }
+    }
+
+    for (const { socket, engineId, reason } of stale) {
+      try {
+        this.notifyStale(socket, engineId, reason);
+      } catch (err) {
+        this.logger.error(
+          `sweepStale: handler threw for engine ${engineId ?? 'unidentified'} (${reason}): ${String(err)}`,
         );
       }
     }

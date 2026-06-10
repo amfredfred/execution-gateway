@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { createHmac, randomBytes } from 'node:crypto';
 import * as nodemailer from 'nodemailer';
+import { SignalEngineSubscriberService } from '../signal-engine/signal-engine-subscriber.service';
 
 // ─── Lemon Squeezy event payload shapes (partial) ─────────────────────────────
 
@@ -88,7 +89,10 @@ export class WebhookService {
   private readonly emailFrom: string;
   private readonly dashboardUrl: string;
 
-  constructor(private readonly config: ConfigService) {
+  constructor(
+    private readonly config: ConfigService,
+    private readonly signalEngine: SignalEngineSubscriberService,
+  ) {
     const url = config.get<string>('supabase.url');
     const key = config.get<string>('supabase.serviceRoleKey');
     this.pepper = config.get<string>('licensing.activationKeyPepper');
@@ -129,10 +133,21 @@ export class WebhookService {
    */
   verifySignature(rawBody: Buffer, signature: string): boolean {
     if (!this.webhookSecret) {
+      const isProduction = this.config.get<string>('NODE_ENV') === 'production'
+        || process.env['NODE_ENV'] === 'production';
+      if (isProduction) {
+        // BUG-07: Never accept unsigned webhooks in production — forged events would
+        // bypass licensing entirely. Reject hard so ops notice the misconfiguration.
+        this.logger.error(
+          'LEMON_SQUEEZY_WEBHOOK_SECRET is not set in production — rejecting all webhook calls. ' +
+          'Set the env var to the Lemon Squeezy signing secret immediately.',
+        );
+        return false;
+      }
       this.logger.warn(
-        'LEMON_SQUEEZY_WEBHOOK_SECRET not set — skipping signature verification (development mode)',
+        'LEMON_SQUEEZY_WEBHOOK_SECRET not set — skipping signature verification (development mode only)',
       );
-      return true; // Allow in development; enforce in production via env var
+      return true;
     }
     const expected = createHmac('sha256', this.webhookSecret)
       .update(rawBody)
@@ -278,29 +293,51 @@ export class WebhookService {
     const email = attrs.customer_email || attrs.user_email;
     if (!email) return;
 
-    // Find the user
     const userId = await this.resolveUserId(email);
     if (!userId) return;
 
-    // Extend all active licenses for this user
     const newExpiresAt = attrs.renews_at
       ? new Date(
           new Date(attrs.renews_at).getTime() + DEFAULT_LICENSE_DAYS * 86_400_000,
         ).toISOString()
       : this.futureIso(DEFAULT_LICENSE_DAYS);
 
-    const { error } = await this.supabase
+    // BUG-05: Select the single most-recently-created active license so we never
+    // accidentally extend every license a user holds when only one subscription renewed.
+    const { data: licenses, error: selectErr } = await this.supabase
       .from('licenses')
-      .update({ expires_at: newExpiresAt, updated_at: new Date().toISOString() })
+      .select('id')
       .eq('owner_user_id', userId)
-      .eq('status', 'active');
+      .eq('status', 'active')
+      .order('created_at', { ascending: false })
+      .limit(1);
 
-    if (error) {
-      this.logger.error(`Subscription renewed: failed to extend license — ${error.message}`);
+    if (selectErr || !licenses?.length) {
+      this.logger.warn(`Subscription renewed: no active license found for ${email}`);
       return;
     }
 
-    this.logger.log(`Subscription renewed: extended license for ${email} to ${newExpiresAt}`);
+    if (licenses.length > 1) {
+      // Defensive — limit(1) above should prevent this, but log if Supabase returns more.
+      this.logger.warn(
+        `Subscription renewed: multiple active licenses for ${email} — extending only the most recent`,
+      );
+    }
+
+    const licenseId = licenses[0].id as string;
+    const { error } = await this.supabase
+      .from('licenses')
+      .update({ expires_at: newExpiresAt, updated_at: new Date().toISOString() })
+      .eq('id', licenseId);
+
+    if (error) {
+      this.logger.error(`Subscription renewed: failed to extend license ${licenseId} — ${error.message}`);
+      return;
+    }
+
+    this.logger.log(
+      `Subscription renewed: extended license ${licenseId} for ${email} to ${newExpiresAt}`,
+    );
   }
 
   // ── Subscription cancelled/expired → suspend license ─────────────────────
@@ -367,18 +404,32 @@ export class WebhookService {
         ).toISOString()
       : this.futureIso(DEFAULT_LICENSE_DAYS);
 
-    const { error } = await this.supabase
+    // BUG-06: Reactivate and return the license ID so we can re-issue the key.
+    // When a subscription is suspended, activation_key_hash is cleared — the
+    // customer would have an active license but no usable key without this step.
+    const { data: updated, error } = await this.supabase
       .from('licenses')
       .update({ status: 'active', expires_at: newExpiresAt, updated_at: new Date().toISOString() })
       .eq('owner_user_id', userId)
-      .eq('status', 'suspended');
+      .eq('status', 'suspended')
+      .select('id')
+      .limit(1);
 
     if (error) {
       this.logger.error(`Subscription resumed: failed to reactivate license for ${email} — ${error.message}`);
       return;
     }
 
-    this.logger.log(`Subscription resumed: reactivated license for ${email}`);
+    if (!updated?.length) {
+      this.logger.warn(`Subscription resumed: no suspended license found for ${email} — nothing to reactivate`);
+      return;
+    }
+
+    const licenseId = updated[0].id as string;
+    this.logger.log(`Subscription resumed: reactivated license ${licenseId} for ${email}`);
+
+    // Re-issue a fresh activation key — the previous one was cleared on suspension.
+    await this.issueAndDeliverKey(licenseId, userId, email);
   }
 
   // ── Plan changed → update max_devices ─────────────────────────────────────
@@ -536,10 +587,20 @@ export class WebhookService {
     const raw = `TR-${randomBytes(20).toString('hex').toUpperCase()}`;
     const hash = createHmac('sha256', this.pepper).update(raw).digest('hex');
 
+    const symbols = this.signalEngine.availableSymbols;
+    if (symbols.length === 0) {
+      this.logger.error(
+        `Cannot issue key for license ${licenseId}: signal engine has no available symbols. ` +
+        'Ensure the signal engine is connected before processing orders.',
+      );
+      return;
+    }
+
     const { error } = await this.supabase!.rpc('issue_activation_key', {
-      p_license_id: licenseId,
+      p_license_id:    licenseId,
       p_owner_user_id: userId,
-      p_new_key_hash: hash,
+      p_new_key_hash:  hash,
+      p_symbols:       symbols,
     });
 
     if (error) {
