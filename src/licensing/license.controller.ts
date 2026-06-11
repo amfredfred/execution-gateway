@@ -18,9 +18,11 @@ import { createClient, SupabaseClient, User } from '@supabase/supabase-js';
 import { LicenseService } from './license.service';
 import { RateLimitService } from '../common/rate-limit/rate-limit.service';
 
-/** Max key-issuance requests per IP per hour (manual action — very low). */
-const RL_KEY_LIMIT = 5;
-const RL_KEY_WIN_MS = 3_600_000;
+/** Key issuance: 3 per user per hour (intentional human action, rarely repeated). */
+const RL_KEY_USER_LIMIT  = 3;
+/** Loose IP guard before auth resolves (catches unauthenticated hammering). */
+const RL_KEY_IP_LIMIT    = 20;
+const RL_KEY_WIN_MS      = 3_600_000;
 
 @Controller('licenses')
 export class LicenseController {
@@ -60,13 +62,13 @@ export class LicenseController {
     @Req() req: any,
   ): Promise<{ key: string }> {
     const ip = this.clientIp(req);
-    if (!this.rateLimit.check(`key_issue:${ip}`, RL_KEY_LIMIT, RL_KEY_WIN_MS)) {
-      throw new HttpException(
-        'Rate limit exceeded',
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
+    if (!this.rateLimit.check(`key_issue_ip:${ip}`, RL_KEY_IP_LIMIT, RL_KEY_WIN_MS)) {
+      throw new HttpException('Rate limit exceeded', HttpStatus.TOO_MANY_REQUESTS);
     }
     const user = await this.resolveUser(authHeader);
+    if (!this.rateLimit.check(`key_issue_user:${user.id}`, RL_KEY_USER_LIMIT, RL_KEY_WIN_MS)) {
+      throw new HttpException('Rate limit exceeded', HttpStatus.TOO_MANY_REQUESTS);
+    }
     const result = await this.licenses.issueKey(licenseId, user.id);
 
     if ('error' in result) {
