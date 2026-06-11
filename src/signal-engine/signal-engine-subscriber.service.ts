@@ -75,7 +75,7 @@ export class SignalEngineSubscriberService
       ? `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(secret)}`
       : baseUrl;
 
-    this.socket = new WebSocket(url);
+    this.socket = new WebSocket(url, {});
     this.socket.on('open', () => {
       this.logger.log('Connected as sole Signal Engine subscriber');
       this.subscribedSymbols.clear();
