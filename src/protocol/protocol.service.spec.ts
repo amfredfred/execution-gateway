@@ -77,4 +77,51 @@ describe('ProtocolService', () => {
     expect(result.valid).toBe(true);
     expect(result.message?.payload).not.toHaveProperty('signal');
   });
+
+  it('accepts safe MT5 account and installation identity metadata', () => {
+    const result = service.validate({
+      protocol_version: '1.0',
+      message_id: 'message_activation_001',
+      event: 'activation.request',
+      sent_at: '2026-06-06T12:00:00.000Z',
+      payload: {
+        activation_key: 'TR-VALID-ACTIVATION-KEY',
+        device_name: 'agent-machine',
+        engine_version: '1.0.0',
+        platform: {
+          os: 'windows',
+          architecture: 'x64',
+          mt5_installation_id: 'a'.repeat(64),
+          mt5_terminal_build: 5000,
+        },
+        mt5_accounts: [
+          { login: '1003', server: 'Broker-Server', mode: 'live' },
+        ],
+      },
+    });
+
+    expect(result.valid).toBe(true);
+  });
+
+  it('rejects terminal filesystem paths in activation metadata', () => {
+    const result = service.validate({
+      protocol_version: '1.0',
+      message_id: 'message_activation_path_001',
+      event: 'activation.request',
+      sent_at: '2026-06-06T12:00:00.000Z',
+      payload: {
+        activation_key: 'TR-VALID-ACTIVATION-KEY',
+        device_name: 'agent-machine',
+        engine_version: '1.0.0',
+        platform: {
+          os: 'windows',
+          architecture: 'x64',
+          terminal_path: 'C:\\MT5\\terminal64.exe',
+        },
+        mt5_accounts: [],
+      },
+    });
+
+    expect(result.valid).toBe(false);
+  });
 });

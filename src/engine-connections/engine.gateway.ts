@@ -22,18 +22,19 @@ import {
 import { DashboardConnectionRegistryService } from '../dashboard-connections/dashboard-connection-registry.service';
 import { RemoteCommandService } from '../commands/remote-command.service';
 import { RateLimitService } from '../common/rate-limit/rate-limit.service';
+import type { Mt5AccountMetadata } from '../licensing/license.types';
 
 // ── Rate-limit constants ───────────────────────────────────────────────────
 /** Max new engine WS connections accepted per IP per minute. */
 const RL_CONNECT_LIMIT = 20;
 const RL_CONNECT_WIN_MS = 60_000;
 
-/** Max activation.request attempts per IP in a 10-minute window. */
-const RL_ACT_IP_LIMIT = 5;
+/** Broad abuse ceiling; valid multi-agent startup and retries must fit. */
+const RL_ACT_IP_LIMIT = 20;
 const RL_ACT_IP_WIN_MS = 600_000;
 
-/** Max activation.request attempts per (hashed) key in a 10-minute window. */
-const RL_ACT_KEY_LIMIT = 3;
+/** Invalid activation failures allowed per (hashed) key in 10 minutes. */
+const RL_ACT_KEY_FAILURE_LIMIT = 3;
 const RL_ACT_KEY_WIN_MS = 600_000;
 
 // Symbol used to stash the remote IP on the socket object at connect-time.
@@ -69,10 +70,11 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly rateLimit: RateLimitService,
   ) {
     this.connections.onStale((socket, engineId, reason) => {
-      if (engineId) this.rooms.leave(engineId);
-      this.closeSession(socket, reason);
-      this.connections.remove(socket);
-      socket.close(1008, reason);
+      this.retireSocket(socket, reason);
+    });
+    this.licenses.onDeviceReleased((engineId) => {
+      const socket = this.connections.currentSocket(engineId);
+      if (socket) this.retireSocket(socket, 'device_released');
     });
   }
 
@@ -106,9 +108,10 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   handleDisconnect(socket: WebSocket) {
     const engineId = this.connections.engineId(socket);
+    const wasCurrent = this.connections.isCurrent(socket);
     if (engineId) {
-      this.rooms.leave(engineId);
-      this.dashboards.broadcastEngineOffline(engineId);
+      this.rooms.leave(engineId, undefined, socket);
+      if (wasCurrent) this.dashboards.broadcastEngineOffline(engineId);
     }
     this.closeSession(socket, 'socket_disconnected');
     this.connections.remove(socket);
@@ -126,7 +129,18 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (!accepted.ok) return accepted.response;
 
     const engineId = String(accepted.message.payload.engine_id);
-    this.connections.identify(socket, engineId);
+    const accounts = accepted.message.payload.accounts as Mt5AccountMetadata[];
+    if (accounts.length > 1) {
+      return this.rejected(message.message_id, [
+        'only one MT5 account may be reported',
+      ]);
+    }
+    if (!this.connections.identify(socket, engineId)) {
+      return this.rejected(message.message_id, [
+        'authorized connection cannot change engine_id',
+      ]);
+    }
+    this.connections.setAccount(socket, accounts[0] ?? null);
 
     // 1.16 — Fast-path: if engine presents a device credential, verify it and
     // skip the activation.request round-trip entirely.
@@ -139,17 +153,19 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
         credential,
       );
       if (result?.ok && result.activation) {
-        this.connections.authorize(
+        const replacedSocket = this.connections.authorize(
           socket,
           result.activation.licenseId,
           result.activation.engineDeviceId,
           result.activation.symbols,
           result.activation.expiresAt,
         );
+        if (replacedSocket) this.retireSocket(replacedSocket, 'replaced');
         if (result.activation.engineDeviceId) {
           const sessionId = await this.sessions.open(
             result.activation.engineDeviceId,
             engineId,
+            this.sessionMetadata(socket),
           );
           if (sessionId) this.connections.setSessionId(socket, sessionId);
         }
@@ -229,11 +245,11 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     // ── Rate-limit: per key (prevents brute-force across connections) ─────
     const rawKey = String(accepted.message.payload.activation_key ?? '');
     if (
-      !this.rateLimit.check(
+      this.rateLimit.remaining(
         keyBucket(rawKey),
-        RL_ACT_KEY_LIMIT,
+        RL_ACT_KEY_FAILURE_LIMIT,
         RL_ACT_KEY_WIN_MS,
-      )
+      ) === 0
     ) {
       this.logger.warn(
         `activation.request rate-limit (key) exceeded from ${ip}`,
@@ -241,30 +257,62 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return this.rejected(message.message_id, ['rate_limit_exceeded']);
     }
 
+    const activationAccounts = accepted.message.payload
+      .mt5_accounts as Mt5AccountMetadata[];
+    if (activationAccounts.length > 1) {
+      return this.rejected(message.message_id, [
+        'only one MT5 account may be reported',
+      ]);
+    }
+    const helloAccount = this.connections.account(socket);
+    const activationAccount = activationAccounts[0] ?? null;
+    if (JSON.stringify(helloAccount) !== JSON.stringify(activationAccount)) {
+      return this.rejected(message.message_id, [
+        'MT5 account metadata does not match engine.hello',
+      ]);
+    }
+    if (!helloAccount && activationAccount) {
+      this.connections.setAccount(socket, activationAccount);
+    }
+
+    const platform = accepted.message.payload.platform as Record<
+      string,
+      unknown
+    >;
     const result = await this.licenses.activate(
       String(accepted.message.payload.activation_key),
       {
         engineId,
         deviceName: String(accepted.message.payload.device_name),
         engineVersion: String(accepted.message.payload.engine_version),
-        platform: accepted.message.payload.platform as Record<string, unknown>,
+        platform: {
+          ...platform,
+          ...(activationAccount ? { mt5_account: activationAccount } : {}),
+        },
       },
     );
     if (!result.ok || !result.activation) {
+      this.rateLimit.check(
+        keyBucket(rawKey),
+        RL_ACT_KEY_FAILURE_LIMIT,
+        RL_ACT_KEY_WIN_MS,
+      );
       return this.rejected(message.message_id, result.errors);
     }
 
-    this.connections.authorize(
+    const replacedSocket = this.connections.authorize(
       socket,
       result.activation.licenseId,
       result.activation.engineDeviceId,
       result.activation.symbols,
       result.activation.expiresAt,
     );
+    if (replacedSocket) this.retireSocket(replacedSocket, 'replaced');
     if (result.activation.engineDeviceId) {
       const sessionId = await this.sessions.open(
         result.activation.engineDeviceId,
         engineId,
+        this.sessionMetadata(socket),
       );
       if (sessionId) this.connections.setSessionId(socket, sessionId);
     }
@@ -432,7 +480,11 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (!engineId)
       return this.rejected(message.message_id, ['engine.hello required']);
 
-    this.rooms.leave(engineId, accepted.message.payload.symbols as string[]);
+    this.rooms.leave(
+      engineId,
+      accepted.message.payload.symbols as string[],
+      socket,
+    );
     return accepted.response;
   }
 
@@ -520,6 +572,22 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private closeSession(socket: WebSocket, reason: string) {
     const sessionId = this.connections.sessionId(socket);
     if (sessionId) this.sessions.close(sessionId, reason);
+  }
+
+  private sessionMetadata(socket: WebSocket): Record<string, unknown> {
+    const account = this.connections.account(socket);
+    return account ? { mt5_account: account } : {};
+  }
+
+  private retireSocket(socket: WebSocket, reason: string) {
+    const engineId = this.connections.engineId(socket);
+    const wasCurrent = this.connections.isCurrent(socket);
+    if (engineId) this.rooms.leave(engineId, undefined, socket);
+    if (engineId && wasCurrent)
+      this.dashboards.broadcastEngineOffline(engineId);
+    this.closeSession(socket, reason);
+    this.connections.remove(socket);
+    socket.close(1008, reason);
   }
 
   private accept(event: string, message: ProtocolMessage) {

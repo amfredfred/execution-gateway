@@ -20,12 +20,16 @@ export class EngineSessionService {
     }
   }
 
-  async open(engineDeviceId: string, engineId: string): Promise<string | null> {
+  async open(
+    engineDeviceId: string,
+    engineId: string,
+    metadata: Record<string, unknown> = {},
+  ): Promise<string | null> {
     if (!this.supabase) return null;
     const { data, error } = await this.supabase.rpc('open_engine_session', {
       p_engine_device_id: engineDeviceId,
       p_gateway_instance: this.gatewayInstance,
-      p_metadata: { engine_id: engineId },
+      p_metadata: { engine_id: engineId, ...metadata },
     });
     if (error) {
       this.logger.error(`Failed to open engine session: ${error.message}`);

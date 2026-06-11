@@ -7,6 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { WebSocket } from 'ws';
 import { DashboardConnectionRegistryService } from '../dashboard-connections/dashboard-connection-registry.service';
+import type { Mt5AccountMetadata } from '../licensing/license.types';
 
 interface EngineConnection {
   socket: WebSocket;
@@ -18,6 +19,7 @@ interface EngineConnection {
   licenseExpiresAt: string | null;
   connectedAt: string;
   lastSeenAt: string;
+  account: Mt5AccountMetadata | null;
 }
 
 export type StaleConnectionHandler = (
@@ -32,8 +34,8 @@ export class ConnectionRegistryService
 {
   private readonly logger = new Logger(ConnectionRegistryService.name);
   private readonly connections = new Map<WebSocket, EngineConnection>();
-  // BUG-12: reverse index for O(1) engineId lookups. Latest identify wins;
-  // remove() only clears the entry if it still points at the removed socket.
+  // Only authorized connections enter the reverse index. An unauthenticated
+  // engine.hello must not replace a live engine that happens to share its ID.
   private readonly byEngineId = new Map<string, EngineConnection>();
   private readonly staleHandlers = new Set<StaleConnectionHandler>();
   private sweepTimer?: NodeJS.Timeout;
@@ -63,23 +65,38 @@ export class ConnectionRegistryService
       licenseExpiresAt: null,
       connectedAt: now,
       lastSeenAt: now,
+      account: null,
     });
   }
 
-  identify(socket: WebSocket, engineId: string) {
+  identify(socket: WebSocket, engineId: string): boolean {
     const connection = this.connections.get(socket);
-    if (!connection) return;
-    if (connection.engineId && connection.engineId !== engineId) {
-      const indexed = this.byEngineId.get(connection.engineId);
-      if (indexed === connection) this.byEngineId.delete(connection.engineId);
+    if (!connection) return false;
+    if (
+      connection.licenseId &&
+      connection.engineId &&
+      connection.engineId !== engineId
+    ) {
+      return false;
     }
     connection.engineId = engineId;
     connection.lastSeenAt = new Date().toISOString();
-    this.byEngineId.set(engineId, connection);
+    return true;
   }
 
   engineId(socket: WebSocket) {
     return this.connections.get(socket)?.engineId ?? null;
+  }
+
+  setAccount(socket: WebSocket, account: Mt5AccountMetadata | null): boolean {
+    const connection = this.connections.get(socket);
+    if (!connection) return false;
+    connection.account = account;
+    return true;
+  }
+
+  account(socket: WebSocket): Mt5AccountMetadata | null {
+    return this.connections.get(socket)?.account ?? null;
   }
 
   authorize(
@@ -88,20 +105,27 @@ export class ConnectionRegistryService
     engineDeviceId: string | undefined,
     entitledSymbols: ReadonlySet<string>,
     licenseExpiresAt: string | null,
-  ) {
+  ): WebSocket | null {
     const connection = this.connections.get(socket);
-    if (!connection) return;
+    if (!connection) return null;
+    const previous = connection.engineId
+      ? this.byEngineId.get(connection.engineId)
+      : undefined;
     connection.licenseId = licenseId;
     connection.engineDeviceId = engineDeviceId ?? null;
     connection.entitledSymbols = new Set(entitledSymbols);
     connection.licenseExpiresAt = licenseExpiresAt;
     connection.lastSeenAt = new Date().toISOString();
+    if (connection.engineId) {
+      this.byEngineId.set(connection.engineId, connection);
+    }
     if (
       connection.engineId &&
       this.dashboards.executionMetricSubscriberCount(connection.engineId) > 0
     ) {
       this.sendExecutionMetricDemand(connection.engineId, true);
     }
+    return previous && previous !== connection ? previous.socket : null;
   }
 
   authorizationErrors(socket: WebSocket, symbols: string[]) {
@@ -181,7 +205,19 @@ export class ConnectionRegistryService
     this.connections.delete(socket);
   }
 
-  /** BUG-12: O(1) lookup of the authenticated connection for an engineId. */
+  isCurrent(socket: WebSocket): boolean {
+    const connection = this.connections.get(socket);
+    return Boolean(
+      connection?.engineId &&
+      this.byEngineId.get(connection.engineId) === connection,
+    );
+  }
+
+  currentSocket(engineId: string): WebSocket | null {
+    return this.authorizedConnection(engineId)?.socket ?? null;
+  }
+
+  /** O(1) lookup of the current authenticated connection for an engineId. */
   private authorizedConnection(engineId: string): EngineConnection | null {
     const connection = this.byEngineId.get(engineId);
     return connection?.licenseId ? connection : null;

@@ -100,6 +100,19 @@ describe('ConnectionRegistryService sendToEngine (BUG-12 reverse index)', () => 
     );
   });
 
+  it('returns only the current authorized socket for release handling', () => {
+    const connections = service();
+    const { socket } = openSocket();
+    connections.add(socket);
+    connections.identify(socket, 'engine-001');
+
+    expect(connections.currentSocket('engine-001')).toBeNull();
+
+    connections.authorize(socket, 'license-001', 'device-001', new Set(), null);
+
+    expect(connections.currentSocket('engine-001')).toBe(socket);
+  });
+
   it('refuses delivery to an identified but unauthorized engine', () => {
     const connections = service();
     const { socket } = openSocket();
@@ -127,7 +140,7 @@ describe('ConnectionRegistryService sendToEngine (BUG-12 reverse index)', () => 
 
     connections.add(fresh.socket);
     connections.identify(fresh.socket, 'engine-001');
-    connections.authorize(
+    const replaced = connections.authorize(
       fresh.socket,
       'license-001',
       'device-001',
@@ -135,6 +148,7 @@ describe('ConnectionRegistryService sendToEngine (BUG-12 reverse index)', () => 
       null,
     );
 
+    expect(replaced).toBe(old.socket);
     expect(connections.sendToEngine('engine-001', 'command.pause', {})).toBe(
       true,
     );
@@ -145,6 +159,47 @@ describe('ConnectionRegistryService sendToEngine (BUG-12 reverse index)', () => 
     connections.remove(old.socket);
     expect(connections.sendToEngine('engine-001', 'command.resume', {})).toBe(
       true,
+    );
+  });
+
+  it('does not replace a live engine until the new socket is authorized', () => {
+    const connections = service();
+    const old = openSocket();
+    const untrusted = openSocket();
+    connections.add(old.socket);
+    connections.identify(old.socket, 'engine-001');
+    connections.authorize(
+      old.socket,
+      'license-001',
+      'device-001',
+      new Set(),
+      null,
+    );
+
+    connections.add(untrusted.socket);
+    connections.identify(untrusted.socket, 'engine-001');
+
+    expect(connections.isCurrent(old.socket)).toBe(true);
+    expect(connections.isCurrent(untrusted.socket)).toBe(false);
+    expect(connections.sendToEngine('engine-001', 'command.pause', {})).toBe(
+      true,
+    );
+    expect(old.send).toHaveBeenCalled();
+    expect(untrusted.send).not.toHaveBeenCalled();
+  });
+
+  it('does not let an authorized socket change its engine identity', () => {
+    const connections = service();
+    const { socket } = openSocket();
+    connections.add(socket);
+    connections.identify(socket, 'engine-001');
+    connections.authorize(socket, 'license-001', 'device-001', new Set(), null);
+
+    expect(connections.identify(socket, 'engine-002')).toBe(false);
+    expect(connections.engineId(socket)).toBe('engine-001');
+    expect(connections.isCurrent(socket)).toBe(true);
+    expect(connections.sendToEngine('engine-002', 'command.pause', {})).toBe(
+      false,
     );
   });
 

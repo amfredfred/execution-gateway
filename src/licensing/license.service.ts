@@ -5,6 +5,7 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type {
   LicenseActivationContext,
   LicenseActivationResult,
+  LicensePreflightResult,
 } from './license.types';
 import { SignalEngineSubscriberService } from '../signal-engine/signal-engine-subscriber.service';
 
@@ -15,11 +16,22 @@ interface ActivationRpcRow {
   symbols: string[];
 }
 
+interface PreflightRpcRow {
+  status: string;
+  max_devices: number;
+  used_devices: number;
+  expires_at: string | null;
+  symbols: string[];
+}
+
+type DeviceReleasedListener = (engineId: string) => void;
+
 @Injectable()
 export class LicenseService {
   private readonly logger = new Logger(LicenseService.name);
   private readonly supabase?: SupabaseClient;
   private readonly activationKeyPepper?: string;
+  private readonly deviceReleasedListeners = new Set<DeviceReleasedListener>();
 
   constructor(
     private readonly config: ConfigService,
@@ -63,6 +75,100 @@ export class LicenseService {
       };
     }
     return this.activateWithSupabase(activationKey, context);
+  }
+
+  async preflight(activationKey: string): Promise<LicensePreflightResult> {
+    if (!this.supabase || !this.activationKeyPepper) {
+      return { ok: false, error: 'Gateway is not configured for activation' };
+    }
+
+    const activationKeyHash = createHmac('sha256', this.activationKeyPepper)
+      .update(activationKey)
+      .digest('hex');
+    const response = await this.supabase.rpc('activation_preflight', {
+      p_activation_key_hash: activationKeyHash,
+    });
+    if (response.error) {
+      this.logger.warn(
+        `Activation preflight failed: ${response.error.message}`,
+      );
+      return { ok: false, error: 'Activation preflight unavailable' };
+    }
+
+    const row = (response.data as PreflightRpcRow[] | null)?.[0];
+    if (!row) return { ok: true, preflight: { valid: false } };
+
+    const usedDevices = Number(row.used_devices);
+    const maxDevices = Number(row.max_devices);
+    return {
+      ok: true,
+      preflight: {
+        valid: true,
+        status: row.status,
+        max_devices: maxDevices,
+        used_devices: usedDevices,
+        available_devices: Math.max(0, maxDevices - usedDevices),
+        expires_at: row.expires_at,
+        symbols: row.symbols.map((symbol) => this.normalize(symbol)),
+      },
+    };
+  }
+
+  onDeviceReleased(listener: DeviceReleasedListener) {
+    this.deviceReleasedListeners.add(listener);
+    return () => this.deviceReleasedListeners.delete(listener);
+  }
+
+  async releaseOwnedDevice(
+    licenseId: string,
+    engineDeviceId: string,
+    ownerUserId: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    if (!this.supabase) {
+      return { ok: false, error: 'Device release is not configured' };
+    }
+    const { data, error } = await this.supabase.rpc(
+      'release_owned_engine_device',
+      {
+        p_license_id: licenseId,
+        p_engine_device_id: engineDeviceId,
+        p_owner_user_id: ownerUserId,
+      },
+    );
+    if (error) {
+      this.logger.warn(`Owned device release failed: ${error.message}`);
+      return { ok: false, error: error.message };
+    }
+    if (typeof data !== 'string') {
+      return { ok: false, error: 'engine device not found' };
+    }
+    this.notifyDeviceReleased(data);
+    return { ok: true };
+  }
+
+  async releaseDevice(
+    engineId: string,
+    deviceCredential: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    if (!this.supabase || !this.activationKeyPepper) {
+      return { ok: false, error: 'Device release is not configured' };
+    }
+    const credentialHash = createHmac('sha256', this.activationKeyPepper)
+      .update(deviceCredential)
+      .digest('hex');
+    const { data, error } = await this.supabase.rpc('release_engine_device', {
+      p_engine_id: engineId,
+      p_credential_hash: credentialHash,
+    });
+    if (error) {
+      this.logger.warn(`Device self-release failed: ${error.message}`);
+      return { ok: false, error: 'Invalid engine device credential' };
+    }
+    if (typeof data !== 'string') {
+      return { ok: false, error: 'Invalid engine device credential' };
+    }
+    this.notifyDeviceReleased(data);
+    return { ok: true };
   }
 
   /**
@@ -377,5 +483,17 @@ export class LicenseService {
 
   private normalize(symbol: string) {
     return symbol.trim().replaceAll('/', '').toUpperCase();
+  }
+
+  private notifyDeviceReleased(engineId: string) {
+    for (const listener of this.deviceReleasedListeners) {
+      try {
+        listener(engineId);
+      } catch (error) {
+        this.logger.error(
+          `Device release listener failed for ${engineId}: ${String(error)}`,
+        );
+      }
+    }
   }
 }

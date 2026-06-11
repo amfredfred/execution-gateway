@@ -43,4 +43,28 @@ describe('RoomRegistryService', () => {
     expect(rooms.symbols.has('XAUUSD')).toBe(false);
     expect(rooms.roomCount).toBe(0);
   });
+
+  it('does not let a stale socket remove a replacement membership', () => {
+    const staleSend = jest.fn();
+    const freshSend = jest.fn();
+    const stale = openSocket(staleSend);
+    const fresh = openSocket(freshSend);
+    rooms.join('engine-001', stale, ['XAUUSD']);
+    rooms.join('engine-001', fresh, ['XAUUSD']);
+
+    rooms.leave('engine-001', undefined, stale);
+
+    expect(rooms.broadcast('XAUUSD', '{"event":"signal.triggered"}')).toBe(1);
+    expect(freshSend).toHaveBeenCalledTimes(1);
+    expect(staleSend).not.toHaveBeenCalled();
+  });
+
+  it('allows the current socket to remove its own membership', () => {
+    const socket = openSocket();
+    rooms.join('engine-001', socket, ['XAUUSD']);
+
+    rooms.leave('engine-001', undefined, socket);
+
+    expect(rooms.roomCount).toBe(0);
+  });
 });

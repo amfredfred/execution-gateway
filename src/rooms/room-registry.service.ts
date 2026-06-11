@@ -76,12 +76,14 @@ export class RoomRegistryService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  leave(engineId: string, symbols?: string[]) {
+  leave(engineId: string, symbols?: string[], socket?: WebSocket) {
     const targets = symbols?.map((symbol) => this.normalizeSymbol(symbol));
     let symbolsChanged = false;
 
     for (const [symbol, room] of this.rooms) {
       if (targets && !targets.includes(symbol)) continue;
+      const membership = room.members.get(engineId);
+      if (!membership || (socket && membership.socket !== socket)) continue;
       room.members.delete(engineId);
       if (room.members.size === 0) {
         this.rooms.delete(symbol);

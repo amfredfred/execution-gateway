@@ -27,3 +27,25 @@ export interface LicenseActivationContext {
   engineVersion: string;
   platform: Record<string, unknown>;
 }
+
+export interface Mt5AccountMetadata {
+  login: string;
+  server: string;
+  mode: 'demo' | 'live';
+}
+
+export interface LicensePreflight {
+  valid: boolean;
+  status?: string;
+  max_devices?: number;
+  used_devices?: number;
+  available_devices?: number;
+  expires_at?: string | null;
+  symbols?: string[];
+}
+
+export interface LicensePreflightResult {
+  ok: boolean;
+  preflight?: LicensePreflight;
+  error?: string;
+}
