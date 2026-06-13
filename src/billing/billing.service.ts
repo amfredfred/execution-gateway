@@ -1,76 +1,44 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-// ─── LS API shapes (partial) ───────────────────────────────────────────────────
+// ─── Paystack API shapes ───────────────────────────────────────────────────────
 
-interface LsVariantAttributes {
+interface PaystackPlan {
+  id: number;
+  plan_code: string;
   name: string;
-  status: string;
-  price: number; // smallest currency unit (e.g. kobo for NGN, cents for USD)
-  is_subscription: boolean;
-  interval: string | null; // "month" | "year" | null
-  interval_count: number | null;
-  has_free_trial: boolean;
-  trial_interval: string | null; // "day" | "week" | "month" | "year" | null
-  trial_interval_count: number | null;
-  product_id: number;
-  sort: number;
+  description: string | null;
+  amount: number;       // smallest currency unit (kobo for NGN)
+  interval: string;     // "monthly" | "annually" | "weekly" | "quarterly" | "biannually"
+  currency: string;
+  is_deleted: boolean;
+  is_archived: boolean;
 }
 
-interface LsProductAttributes {
-  name: string;
-  status: string;
-  buy_now_url: string | null;
-}
-
-interface LsProduct {
-  id: string;
-  type: string;
-  attributes: LsProductAttributes;
-}
-
-interface LsProductsResponse {
-  data: LsProduct[];
-}
-
-interface LsVariant {
-  id: string;
-  type: string;
-  attributes: LsVariantAttributes;
-}
-
-interface LsVariantsResponse {
-  data: LsVariant[];
-  links?: { next?: string | null };
-}
-
-interface LsStoreAttributes {
-  currency: string; // ISO 4217, e.g. "NGN", "USD"
-}
-
-interface LsStoreResponse {
-  data: { attributes: LsStoreAttributes };
+interface PaystackPlansResponse {
+  status: boolean;
+  data: PaystackPlan[];
 }
 
 // ─── Public plan shape returned to the dashboard ──────────────────────────────
 
 export interface BillingPlan {
-  variantId: string;
-  planKey: string; // "starter" | "pro" | "infrastructure"
+  variantId: string;   // plan_code
+  planKey: string;   // "starter" | "pro" | "infrastructure"
   interval: 'monthly' | 'yearly' | 'custom';
   name: string;
-  price: string; // formatted, e.g. "₦33,000"
-  priceNote: string; // e.g. "₦25,000/mo · ₦300,000 billed yearly"
-  currency: string; // ISO 4217 code, e.g. "NGN"
+  price: string;   // formatted, e.g. "₦33,000"
+  priceNote: string;   // e.g. "₦396,000 billed yearly"
+  currency: string;
   devices: number;
   desc: string;
   features: string[];
   highlight: boolean;
-  checkoutUrl: string;
-  trialDays: number | null; // only set for yearly plans with a trial configured in LS
+  checkoutUrl: string;   // https://paystack.com/pay/{plan_code}
+  trialDays: number | null;
 }
 
-// ─── Static plan metadata ──────────────────────────────────────────────────────
+// ─── Static plan metadata (matched by plan name substring) ────────────────────
 
 interface PlanMeta {
   planKey: string;
@@ -82,104 +50,134 @@ interface PlanMeta {
   highlight: boolean;
 }
 
-const PLAN_META: Array<{ match: string } & PlanMeta> = [
+const PLAN_META: Array<{ matchKey: string; matchInterval: string } & PlanMeta> = [
   {
-    match: 'starter monthly',
-    planKey: 'starter',
-    interval: 'monthly',
-    name: 'AQM Starter',
-    devices: 1,
+    matchKey: 'starter', matchInterval: 'monthly',
+    planKey: 'starter', interval: 'monthly',
+    name: 'AQM Starter', devices: 1,
     desc: 'One Trading Agent. Signals delivered and traded automatically on your MT5.',
-    features: [
-      '1 Trading Agent',
-      'Live signal delivery',
-      'Automatic MT5 execution',
-      'Customer dashboard',
-    ],
+    features: ['1 Trading Agent', 'Live signal delivery', 'Automatic MT5 execution', 'Customer dashboard'],
     highlight: false,
   },
   {
-    match: 'starter yearly',
-    planKey: 'starter',
-    interval: 'yearly',
-    name: 'AQ Starter',
-    devices: 1,
+    matchKey: 'starter', matchInterval: 'annually',
+    planKey: 'starter', interval: 'yearly',
+    name: 'AQ Starter', devices: 1,
     desc: 'Everything in AQM Starter — billed yearly at a lower rate.',
-    features: [
-      '1 Trading Agent',
-      'Live signal delivery',
-      'Automatic MT5 execution',
-      'Customer dashboard',
-      '20% yearly discount',
-    ],
+    features: ['1 Trading Agent', 'Live signal delivery', 'Automatic MT5 execution', 'Customer dashboard', '20% yearly discount'],
     highlight: false,
   },
   {
-    match: 'pro monthly',
-    planKey: 'pro',
-    interval: 'monthly',
-    name: 'AQM Pro',
-    devices: 3,
+    matchKey: 'pro', matchInterval: 'monthly',
+    planKey: 'pro', interval: 'monthly',
+    name: 'AQM Pro', devices: 3,
     desc: 'Run up to 3 Trading Agents across multiple accounts or VPS instances simultaneously.',
-    features: [
-      '3 Trading Agents',
-      'Live signal delivery',
-      'Automatic MT5 execution',
-      'Multi-account support',
-      'Customer dashboard',
-    ],
+    features: ['3 Trading Agents', 'Live signal delivery', 'Automatic MT5 execution', 'Multi-account support', 'Customer dashboard'],
     highlight: true,
   },
   {
-    match: 'pro yearly',
-    planKey: 'pro',
-    interval: 'yearly',
-    name: 'AQ Pro',
-    devices: 3,
+    matchKey: 'pro', matchInterval: 'annually',
+    planKey: 'pro', interval: 'yearly',
+    name: 'AQ Pro', devices: 3,
     desc: 'Everything in AQM Pro — billed yearly at a lower rate.',
-    features: [
-      '3 Trading Agents',
-      'Live signal delivery',
-      'Automatic MT5 execution',
-      'Multi-account support',
-      'Customer dashboard',
-      '20% yearly discount',
-    ],
+    features: ['3 Trading Agents', 'Live signal delivery', 'Automatic MT5 execution', 'Multi-account support', 'Customer dashboard', '20% yearly discount'],
     highlight: true,
   },
   {
-    match: 'infrastructure',
-    planKey: 'infrastructure',
-    interval: 'custom',
-    name: 'AQ Infrastructure',
-    devices: 9999,
+    matchKey: 'infra', matchInterval: '',
+    planKey: 'infrastructure', interval: 'custom',
+    name: 'AQ Infrastructure', devices: 9999,
     desc: 'Unlimited Trading Agents for institutions, prop firms, and large-scale deployments.',
-    features: [
-      'Unlimited Trading Agents',
-      'Dedicated signal infrastructure',
-      'Custom integration support',
-      'Priority onboarding',
-      'Customer dashboard',
-    ],
+    features: ['Unlimited Trading Agents', 'Dedicated signal infrastructure', 'Custom integration support', 'Priority onboarding', 'Customer dashboard'],
     highlight: false,
   },
 ];
 
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL_MS = 5 * 60 * 1000;
 
 @Injectable()
 export class BillingService {
   private readonly logger = new Logger(BillingService.name);
-  private readonly apiKey?: string;
-  private readonly storeId?: string;
+  private readonly secretKey?: string;
 
   private _cache: BillingPlan[] | null = null;
   private _cacheAt = 0;
-  private _currency = 'USD'; // updated from LS store on first fetch
+  private _planAmounts = new Map<string, number>(); // plan_code → kobo amount
 
   constructor(private readonly config: ConfigService) {
-    this.apiKey = config.get<string>('billing.lsApiKey');
-    this.storeId = config.get<string>('billing.lsStoreId');
+    this.secretKey = config.get<string>('billing.paystackSecretKey');
+  }
+
+  async verifyTransaction(reference: string): Promise<{
+    success: boolean;
+    planName?: string;
+    amount?: string;
+    email?: string;
+  }> {
+    if (!this.secretKey) throw new Error('PAYSTACK_SECRET_KEY not configured');
+
+    const res = await BillingService.paystackFetch(
+      `https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`,
+      { headers: { Authorization: `Bearer ${this.secretKey}` } },
+    );
+
+    if (!res.ok) {
+      throw new Error(`Paystack verify responded ${res.status}`);
+    }
+
+    const json = (await res.json()) as {
+      status: boolean;
+      data: {
+        status: string;
+        amount: number;
+        currency: string;
+        customer: { email: string };
+        plan_object?: { name: string };
+      };
+    };
+
+    const data = json.data;
+    const success = json.status && data?.status === 'success';
+
+    return {
+      success,
+      planName: data?.plan_object?.name,
+      amount: success ? this.formatAmount(data.amount, data.currency) : undefined,
+      email: data?.customer?.email,
+    };
+  }
+
+  async initializeCheckout(planCode: string, email: string, callbackUrl: string): Promise<string> {
+    if (!this.secretKey) throw new Error('PAYSTACK_SECRET_KEY not configured');
+
+    // Ensure plan amounts are loaded
+    if (!this._planAmounts.has(planCode)) {
+      await this.getPlans();
+    }
+    const amount = this._planAmounts.get(planCode);
+    if (amount === undefined) {
+      throw new Error(`Unknown plan code: ${planCode}`);
+    }
+
+    const res = await BillingService.paystackFetch('https://api.paystack.co/transaction/initialize', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.secretKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ email, amount, plan: planCode, callback_url: callbackUrl }),
+    });
+
+    if (!res.ok) {
+      throw new Error(`Paystack initialize responded ${res.status}: ${await res.text()}`);
+    }
+
+    const json = (await res.json()) as { status: boolean; data: { authorization_url: string } };
+    if (!json.status || !json.data?.authorization_url) {
+      throw new Error('Paystack did not return an authorization_url');
+    }
+
+    return json.data.authorization_url;
   }
 
   async getPlans(): Promise<BillingPlan[]> {
@@ -187,238 +185,119 @@ export class BillingService {
       return this._cache;
     }
 
-    if (!this.apiKey) {
-      this.logger.warn('LS_API_KEY not set — returning empty plan list');
+    if (!this.secretKey) {
+      this.logger.warn('PAYSTACK_SECRET_KEY not set — returning empty plan list');
       return [];
     }
 
     try {
-      // Fetch store currency, variants, and products in parallel
-      const [currency, variants, products] = await Promise.all([
-        this.fetchStoreCurrency(),
-        this.fetchVariants(),
-        this.fetchProducts(),
-      ]);
-      this._currency = currency;
-      const plans = this.mapVariantsToPlans(variants, currency, products);
+      const plans = await this.fetchAndMapPlans();
       this._cache = plans;
       this._cacheAt = Date.now();
       return plans;
     } catch (err) {
-      this.logger.error(
-        `Failed to fetch plans from Lemon Squeezy: ${String(err)}`,
-      );
+      this.logger.error(`Failed to fetch plans from Paystack: ${String(err)}`);
       return this._cache ?? [];
     }
   }
 
-  // ── LS API fetch ─────────────────────────────────────────────────────────────
+  private static paystackFetch(url: string, init: RequestInit = {}): Promise<Response> {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15_000);
+    return fetch(url, { ...init, signal: ctrl.signal }).finally(() => clearTimeout(timer));
+  }
 
-  private async fetchStoreCurrency(): Promise<string> {
-    if (!this.storeId) return 'USD';
-    const res = await fetch(
-      `https://api.lemonsqueezy.com/v1/stores/${this.storeId}`,
-      {
-        headers: {
-          Accept: 'application/vnd.api+json',
-          Authorization: `Bearer ${this.apiKey}`,
-        },
+  private async fetchAndMapPlans(): Promise<BillingPlan[]> {
+    const res = await BillingService.paystackFetch('https://api.paystack.co/plan?perPage=50', {
+      headers: {
+        Authorization: `Bearer ${this.secretKey}`,
+        'Content-Type': 'application/json',
       },
-    );
+    });
+
     if (!res.ok) {
-      this.logger.warn(`Could not fetch store currency — defaulting to USD`);
-      return 'USD';
-    }
-    const json = (await res.json()) as LsStoreResponse;
-    return json.data?.attributes?.currency ?? 'USD';
-  }
-
-  private async fetchVariants(): Promise<LsVariant[]> {
-    const res = await fetch(
-      `https://api.lemonsqueezy.com/v1/variants?page[size]=50`,
-      {
-        headers: {
-          Accept: 'application/vnd.api+json',
-          Authorization: `Bearer ${this.apiKey}`,
-        },
-      },
-    );
-    if (!res.ok) {
-      throw new Error(`LS API responded ${res.status}: ${await res.text()}`);
-    }
-    const json = (await res.json()) as LsVariantsResponse;
-    return json.data ?? [];
-  }
-
-  private async fetchProducts(): Promise<Map<number, LsProduct>> {
-    if (!this.storeId) return new Map();
-    const res = await fetch(
-      `https://api.lemonsqueezy.com/v1/products?filter[store_id]=${this.storeId}&page[size]=50`,
-      {
-        headers: {
-          Accept: 'application/vnd.api+json',
-          Authorization: `Bearer ${this.apiKey}`,
-        },
-      },
-    );
-    if (!res.ok) {
-      this.logger.warn(`Failed to fetch products: ${res.status}`);
-      return new Map();
-    }
-    const json = (await res.json()) as LsProductsResponse;
-    const map = new Map<number, LsProduct>();
-    for (const p of json.data ?? []) {
-      map.set(Number(p.id), p);
-    }
-    this.logger.debug(`Fetched ${map.size} products from LS`);
-    return map;
-  }
-
-  // ── Trial helpers ─────────────────────────────────────────────────────────────
-
-  /** Convert LS trial_interval + trial_interval_count into a flat day count. */
-  private trialToDays(
-    interval: string | null,
-    count: number | null,
-  ): number | null {
-    if (!interval || !count) return null;
-    const multipliers: Record<string, number> = {
-      day: 1,
-      week: 7,
-      month: 30,
-      year: 365,
-    };
-    const m = multipliers[interval];
-    return m ? m * count : null;
-  }
-
-  // ── Mapping ───────────────────────────────────────────────────────────────────
-
-  private mapVariantsToPlans(
-    variants: LsVariant[],
-    currency: string,
-    products: Map<number, LsProduct>,
-  ): BillingPlan[] {
-    this.logger.debug(`LS returned ${variants.length} variants`);
-    const idToMeta = new Map<string, (typeof PLAN_META)[number]>();
-    const keys: Array<[string, (typeof PLAN_META)[number]]> = [
-      [
-        this.config.get<string>('licensing.variantStarterMonthly') ?? '',
-        PLAN_META.find((m) => m.match === 'starter monthly')!,
-      ],
-      [
-        this.config.get<string>('licensing.variantStarterYearly') ?? '',
-        PLAN_META.find((m) => m.match === 'starter yearly')!,
-      ],
-      [
-        this.config.get<string>('licensing.variantProMonthly') ?? '',
-        PLAN_META.find((m) => m.match === 'pro monthly')!,
-      ],
-      [
-        this.config.get<string>('licensing.variantProYearly') ?? '',
-        PLAN_META.find((m) => m.match === 'pro yearly')!,
-      ],
-      [
-        this.config.get<string>('licensing.variantInfrastructure') ?? '',
-        PLAN_META.find((m) => m.match === 'infrastructure')!,
-      ],
-    ];
-    for (const [id, meta] of keys) {
-      if (id && meta) idToMeta.set(String(id), meta);
+      throw new Error(`Paystack API responded ${res.status}: ${await res.text()}`);
     }
 
-    const plans: BillingPlan[] = [];
+    const json = (await res.json()) as PaystackPlansResponse;
+    const rawPlans = (json.data ?? []).filter((p) => !p.is_deleted && !p.is_archived);
+    this.logger.debug(`Paystack returned ${rawPlans.length} active plans`);
 
-    for (const v of variants) {
-      const meta = idToMeta.get(v.id);
-      if (!meta) continue;
+    const result: BillingPlan[] = [];
 
-      const attrs = v.attributes;
-      // For yearly plans show the per-month equivalent as the headline price
-      const isYearly = attrs.interval === 'year';
-      const headlineAmount = isYearly
-        ? Math.round(attrs.price / 12)
-        : attrs.price;
-      const price = this.formatAmount(headlineAmount, currency);
-      const priceNote = this.buildPriceNote(
-        attrs.price,
-        attrs.interval,
-        attrs.interval_count,
-        currency,
-      );
+    for (const plan of rawPlans) {
+      const meta = this.matchMeta(plan);
+      if (!meta) {
+        this.logger.debug(`No meta match for plan "${plan.name}" (${plan.plan_code}) — skipping`);
+        continue;
+      }
 
-      const product = products.get(attrs.product_id);
-      const checkoutUrl = product?.attributes.buy_now_url ?? '';
-      this.logger.debug(
-        `Matched variant ${v.id} → ${meta.planKey}/${meta.interval} | product=${attrs.product_id} buy_now_url="${checkoutUrl}"`,
-      );
+      const isYearly = plan.interval === 'annually';
+      const headlineAmount = isYearly ? Math.round(plan.amount / 12) : plan.amount;
+      const price = this.formatAmount(headlineAmount, plan.currency);
+      const priceNote = isYearly
+        ? `· ${this.formatAmount(plan.amount, plan.currency)} billed yearly`
+        : '';
 
-      // Trial only surfaced for yearly plans
-      const trialDays =
-        meta.interval === 'yearly' && attrs.has_free_trial
-          ? this.trialToDays(attrs.trial_interval, attrs.trial_interval_count)
-          : null;
+      const checkoutUrl = `https://paystack.com/pay/${plan.plan_code}`;
 
-      plans.push({
-        variantId: v.id,
+      this._planAmounts.set(plan.plan_code, plan.amount);
+
+      result.push({
+        variantId: plan.plan_code,
         planKey: meta.planKey,
         interval: meta.interval,
         name: meta.name,
         price,
         priceNote,
-        currency,
+        currency: plan.currency,
         devices: meta.devices,
-        desc: meta.desc,
+        desc: plan.description?.trim() || meta.desc,
         features: meta.features,
         highlight: meta.highlight,
         checkoutUrl,
-        trialDays,
+        trialDays: null,
       });
+
+      this.logger.debug(`Matched plan "${plan.name}" → ${meta.planKey}/${meta.interval}`);
     }
 
     const planOrder = ['starter', 'pro', 'infrastructure'];
-    const intvlOrder = ['monthly', 'yearly', 'custom'];
-    plans.sort((a, b) => {
+    const intervalOrder = ['monthly', 'yearly', 'custom'];
+    result.sort((a, b) => {
       const pd = planOrder.indexOf(a.planKey) - planOrder.indexOf(b.planKey);
-      if (pd !== 0) return pd;
-      return intvlOrder.indexOf(a.interval) - intvlOrder.indexOf(b.interval);
+      return pd !== 0 ? pd : intervalOrder.indexOf(a.interval) - intervalOrder.indexOf(b.interval);
     });
 
-    return plans;
+    return result;
   }
 
-  // ── Formatting ────────────────────────────────────────────────────────────────
+  /**
+   * Match a Paystack plan to static metadata by name substring.
+   * Rules (case-insensitive):
+   *   name contains "infra"           → infrastructure / custom
+   *   name contains "pro" + interval  → pro / monthly|yearly
+   *   name contains "starter" + interval → starter / monthly|yearly
+   */
+  private matchMeta(plan: PaystackPlan): PlanMeta | null {
+    const name = plan.name.toLowerCase();
+    const itvl = plan.interval.toLowerCase(); // "monthly" | "annually"
+
+    for (const meta of PLAN_META) {
+      if (!name.includes(meta.matchKey)) continue;
+      if (meta.matchInterval && !itvl.startsWith(meta.matchInterval.slice(0, 5))) continue;
+      return meta;
+    }
+    return null;
+  }
 
   private formatAmount(smallestUnit: number, currency: string): string {
     if (smallestUnit === 0) return 'Free';
-    // LS stores price in smallest currency unit (kobo for NGN, cents for USD, etc.)
     const amount = smallestUnit / 100;
     return new Intl.NumberFormat('en', {
       style: 'currency',
       currency,
       maximumFractionDigits: amount % 1 === 0 ? 0 : 2,
     }).format(amount);
-  }
-
-  private buildPriceNote(
-    smallestUnit: number,
-    interval: string | null,
-    count: number | null,
-    currency: string,
-  ): string {
-    if (!interval || smallestUnit === 0) return '';
-
-    if (interval === 'month') {
-      // /mo is already in the price headline — only note if multi-month billing cycle
-      return count && count > 1 ? `billed every ${count} months` : '';
-    }
-
-    if (interval === 'year') {
-      // Headline already shows per-month with /mo; note just shows the total billed
-      const yearlyFmt = this.formatAmount(smallestUnit, currency);
-      return `· ${yearlyFmt} billed yearly`;
-    }
-
-    return '';
   }
 }
