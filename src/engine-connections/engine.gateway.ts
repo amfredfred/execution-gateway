@@ -461,10 +461,10 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
       | undefined;
     const licenseExpiresAt = this.connections.licenseExpiresAt(socket);
     const ttlSeconds = this.cappedTtl(requestedTtl, licenseExpiresAt);
-    this.rooms.join(engineId, socket, symbols, ttlSeconds);
-    this.logger.log(
-      `room.subscribe: engine=${engineId} symbols=${symbols.join(',')} ttl=${ttlSeconds ?? 'default'}s`,
-    );
+    const isNew = this.rooms.join(engineId, socket, symbols, ttlSeconds);
+    const msg = `room.subscribe: engine=${engineId} symbols=${symbols.join(',')} ttl=${ttlSeconds ?? 'default'}s`;
+    if (isNew) this.logger.log(msg);
+    else this.logger.debug(msg);
     return accepted.response;
   }
 

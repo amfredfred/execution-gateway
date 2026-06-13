@@ -42,7 +42,7 @@ export class RoomRegistryService implements OnModuleInit, OnModuleDestroy {
     socket: WebSocket,
     symbols: string[],
     ttlSeconds?: number,
-  ) {
+  ): boolean {
     const ttl =
       ttlSeconds ?? this.config.get<number>('rooms.defaultTtlSeconds', 3600);
     const expiresAt = Date.now() + ttl * 1000;
@@ -60,6 +60,7 @@ export class RoomRegistryService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (symbolsChanged) this.notifySymbolsChanged();
+    return symbolsChanged;
   }
 
   /**
