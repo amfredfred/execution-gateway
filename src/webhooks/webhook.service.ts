@@ -131,6 +131,12 @@ export class WebhookService {
         `SMTP configured: ${smtpHost}:${config.get<number>('smtp.port') ?? 587}`,
       );
     } else {
+      const isProd = (process.env.NODE_ENV ?? 'development') === 'production';
+      if (isProd) {
+        throw new Error(
+          'SMTP_HOST is required in production. Set SMTP_HOST in .env to enable activation key email delivery.',
+        );
+      }
       this.logger.warn(
         'SMTP_HOST not set — activation keys will be logged to console only (dev mode)',
       );

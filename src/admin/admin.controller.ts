@@ -7,7 +7,9 @@ import {
   Get,
   Headers,
   HttpCode,
+  HttpException,
   HttpStatus,
+  Ip,
   InternalServerErrorException,
   NotFoundException,
   Param,
@@ -20,12 +22,19 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { LicenseService } from '../licensing/license.service';
 import { ConnectionRegistryService } from '../engine-connections/connection-registry.service';
 import { RemoteCommandService } from '../commands/remote-command.service';
+import { RateLimitService } from '../common/rate-limit/rate-limit.service';
 
 const ALLOWED_COMMAND_TYPES = new Set([
   'command.pause',
   'command.resume',
   'command.emergency_stop',
 ]);
+
+const RL_WIN_MS = 60_000; // 1-minute sliding window for all admin mutation limits
+const RL_KEY_ISSUE  = 20; // POST /admin/licenses/:id/keys
+const RL_KEY_REVOKE = 20; // DELETE /admin/licenses/:id/keys
+const RL_PATCH      = 30; // PATCH /admin/licenses/:id
+const RL_COMMAND    = 60; // POST /admin/commands (stop/resume can be frequent)
 
 @Controller('admin')
 export class AdminController {
@@ -37,6 +46,7 @@ export class AdminController {
     private readonly licenses: LicenseService,
     private readonly engines: ConnectionRegistryService,
     private readonly commands: RemoteCommandService,
+    private readonly rateLimit: RateLimitService,
     config: ConfigService,
   ) {
     this.adminKey = config.get<string>('admin.key');
@@ -228,8 +238,11 @@ export class AdminController {
   async issueKey(
     @Param('id') licenseId: string,
     @Headers('x-admin-key') key: string | undefined,
+    @Ip() ip: string,
   ): Promise<{ key: string }> {
     this.verify(key);
+    if (!this.rateLimit.check(`admin_key_issue:${ip}`, RL_KEY_ISSUE, RL_WIN_MS))
+      throw new HttpException('rate_limit_exceeded', HttpStatus.TOO_MANY_REQUESTS);
     const result = await this.licenses.issueKeyAdmin(licenseId);
     if ('error' in result) {
       if (result.error === 'license not found')
@@ -248,8 +261,11 @@ export class AdminController {
   async revokeKey(
     @Param('id') licenseId: string,
     @Headers('x-admin-key') key: string | undefined,
+    @Ip() ip: string,
   ): Promise<void> {
     this.verify(key);
+    if (!this.rateLimit.check(`admin_key_revoke:${ip}`, RL_KEY_REVOKE, RL_WIN_MS))
+      throw new HttpException('rate_limit_exceeded', HttpStatus.TOO_MANY_REQUESTS);
     const result = await this.licenses.revokeKeyAdmin(licenseId);
     if (!result.ok) {
       if (result.error === 'license not found')
@@ -269,8 +285,11 @@ export class AdminController {
     @Param('id') licenseId: string,
     @Body() body: { status?: string; expires_at?: string | null },
     @Headers('x-admin-key') key: string | undefined,
+    @Ip() ip: string,
   ) {
     this.verify(key);
+    if (!this.rateLimit.check(`admin_patch:${ip}`, RL_PATCH, RL_WIN_MS))
+      throw new HttpException('rate_limit_exceeded', HttpStatus.TOO_MANY_REQUESTS);
     if (!this.supabase)
       throw new InternalServerErrorException('Supabase not configured');
 
@@ -301,8 +320,11 @@ export class AdminController {
   async issueCommand(
     @Body() body: { engine_id?: string; command_type?: string },
     @Headers('x-admin-key') key: string | undefined,
+    @Ip() ip: string,
   ) {
     this.verify(key);
+    if (!this.rateLimit.check(`admin_command:${ip}`, RL_COMMAND, RL_WIN_MS))
+      throw new HttpException('rate_limit_exceeded', HttpStatus.TOO_MANY_REQUESTS);
 
     const engineId = body?.engine_id?.trim();
     const commandType = body?.command_type?.trim();

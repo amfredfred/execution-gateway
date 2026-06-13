@@ -35,7 +35,20 @@ async function bootstrap() {
 
   app.useWebSocketAdapter(new WsAdapter(app));
   app.enableShutdownHooks();
-  await app.listen(config.get<number>('runtime.port', 4000));
+
+  const port = config.get<number>('runtime.port', 4000);
+  await app.listen(port);
+
+  // Drain in-flight requests before exiting. NestJS shutdown hooks close
+  // the HTTP server (stops new connections), then the signal resolves once
+  // all module OnModuleDestroy hooks complete (room eviction, DB flush, etc.).
+  const shutdown = async (signal: string) => {
+    console.log(`[Bootstrap] ${signal} received — shutting down gracefully`);
+    await app.close();
+    process.exit(0);
+  };
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  process.on('SIGINT',  () => void shutdown('SIGINT'));
 }
 
 void bootstrap();

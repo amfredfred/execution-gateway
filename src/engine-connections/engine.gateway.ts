@@ -212,8 +212,13 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
       // Without this, rooms expire after ROOM_DEFAULT_TTL_SECONDS (1 h default)
       // even though the engine is alive and sending heartbeats — causing signal
       // delivery to stop until the engine disconnects and re-subscribes.
+      // Skip renewal for expired licenses — the sweeper will terminate the
+      // connection shortly; don't let expired engines keep receiving signals.
       const engineId = this.connections.engineId(socket);
-      if (engineId) this.rooms.renew(engineId);
+      const expiresAt = this.connections.licenseExpiresAt(socket);
+      const licenseExpired =
+        expiresAt !== null && Date.parse(expiresAt) <= Date.now();
+      if (engineId && !licenseExpired) this.rooms.renew(engineId);
     }
     return accepted.response;
   }
