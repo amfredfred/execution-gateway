@@ -23,6 +23,7 @@ import { DashboardConnectionRegistryService } from '../dashboard-connections/das
 import { RemoteCommandService } from '../commands/remote-command.service';
 import { RateLimitService } from '../common/rate-limit/rate-limit.service';
 import type { Mt5AccountMetadata } from '../licensing/license.types';
+import { EngineRegistryService, type EngineAwarenessPayload } from './engine-registry.service';
 
 // ── Rate-limit constants ───────────────────────────────────────────────────
 /** Max new engine WS connections accepted per IP per minute. */
@@ -68,6 +69,7 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly dashboards: DashboardConnectionRegistryService,
     private readonly remoteCommands: RemoteCommandService,
     private readonly rateLimit: RateLimitService,
+    private readonly engineRegistry: EngineRegistryService,
   ) {
     this.connections.onStale((socket, engineId, reason) => {
       this.retireSocket(socket, reason);
@@ -111,7 +113,10 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const wasCurrent = this.connections.isCurrent(socket);
     if (engineId) {
       this.rooms.leave(engineId, undefined, socket);
-      if (wasCurrent) this.dashboards.broadcastEngineOffline(engineId);
+      if (wasCurrent) {
+        this.dashboards.broadcastEngineOffline(engineId);
+        this.engineRegistry.markOffline(engineId);
+      }
     }
     this.closeSession(socket, 'socket_disconnected');
     this.connections.remove(socket);
@@ -175,6 +180,7 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
               result.activation.engineDeviceId,
             )
           : null;
+        this.engineRegistry.register(engineId, accounts[0] ?? null);
         this.logger.log(`Engine ${engineId}: fast-path credential activation`);
         return {
           event: 'activation.accepted',
@@ -218,7 +224,10 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const expiresAt = this.connections.licenseExpiresAt(socket);
       const licenseExpired =
         expiresAt !== null && Date.parse(expiresAt) <= Date.now();
-      if (engineId && !licenseExpired) this.rooms.renew(engineId);
+      if (engineId && !licenseExpired) {
+        this.rooms.renew(engineId);
+        this.engineRegistry.heartbeat(engineId);
+      }
     }
     return accepted.response;
   }
@@ -327,6 +336,12 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
           result.activation.engineDeviceId,
         )
       : null;
+    this.engineRegistry.register(
+      engineId,
+      activationAccount,
+      String(accepted.message.payload.device_name ?? ''),
+      String(accepted.message.payload.engine_version ?? ''),
+    );
     return {
       event: 'activation.accepted',
       data: {
@@ -388,7 +403,33 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return this.rejected(undefined, ['activation.request required']);
     }
     this.connections.touch(socket);
+    this.engineRegistry.recordMetrics(engineId, message.payload ?? {});
     this.dashboards.broadcastExecutionMetrics(engineId, message.payload ?? {});
+    return {
+      event: 'protocol.accepted',
+      data: { accepted_at: new Date().toISOString() },
+    };
+  }
+
+  /**
+   * Engine reports its operational awareness (terminal state, autotrading,
+   * source_key for signal routing, etc.).  No strict schema validation —
+   * the payload is passed through to the registry and broadcast to dashboards.
+   */
+  @SubscribeMessage('engine.awareness')
+  engineAwareness(
+    @ConnectedSocket() socket: WebSocket,
+    @MessageBody() message: { payload?: unknown },
+  ) {
+    const engineId = this.connections.engineId(socket);
+    if (!engineId || !this.connections.engineDeviceId(socket)) {
+      return this.rejected(undefined, ['activation.request required']);
+    }
+    this.connections.touch(socket);
+    const awareness = (message?.payload ?? {}) as EngineAwarenessPayload;
+    this.engineRegistry.updateAwareness(engineId, awareness);
+    this.dashboards.broadcastEngineAwareness(engineId, awareness);
+    this.logger.debug(`Engine ${engineId}: awareness updated`);
     return {
       event: 'protocol.accepted',
       data: { accepted_at: new Date().toISOString() },
@@ -588,8 +629,10 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const engineId = this.connections.engineId(socket);
     const wasCurrent = this.connections.isCurrent(socket);
     if (engineId) this.rooms.leave(engineId, undefined, socket);
-    if (engineId && wasCurrent)
+    if (engineId && wasCurrent) {
       this.dashboards.broadcastEngineOffline(engineId);
+      this.engineRegistry.markOffline(engineId);
+    }
     this.closeSession(socket, reason);
     this.connections.remove(socket);
     socket.close(1008, reason);

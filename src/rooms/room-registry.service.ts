@@ -108,6 +108,24 @@ export class RoomRegistryService implements OnModuleInit, OnModuleDestroy {
     return delivered;
   }
 
+  /**
+   * Delivers a signal frame only to the specific engine in the given symbol room.
+   * Returns true if the engine was found in the room and the send succeeded.
+   */
+  broadcastToEngine(
+    symbol: string,
+    engineId: string,
+    serializedFrame: string,
+  ): boolean {
+    const room = this.rooms.get(this.normalizeSymbol(symbol));
+    if (!room) return false;
+    const membership = room.members.get(engineId);
+    if (!membership || membership.socket.readyState !== WebSocket.OPEN)
+      return false;
+    membership.socket.send(serializedFrame);
+    return true;
+  }
+
   onSymbolsChanged(listener: SymbolsChangedListener) {
     this.listeners.add(listener);
     listener(this.symbols);

@@ -8,7 +8,9 @@ function message(
 ) {
   return {
     event: 'activation.request',
+    protocol_version: '1.0',
     message_id: id,
+    sent_at: new Date().toISOString(),
     payload: {
       activation_key: 'TR-SHARED-ACTIVATION-KEY',
       device_name: id,
@@ -50,6 +52,7 @@ describe('EngineGateway multi-agent activation rate limits', () => {
       {} as never,
       {} as never,
       new RateLimitService(),
+      { register: jest.fn(), heartbeat: jest.fn(), markOffline: jest.fn(), recordMetrics: jest.fn(), updateAwareness: jest.fn(), onHealthChanged: jest.fn() } as never,
     );
 
     return { gateway, engineIds, licenses, connections, sessions };

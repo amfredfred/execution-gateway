@@ -9,6 +9,7 @@ import { EngineGateway } from './engine.gateway';
 import { EngineSessionService } from './engine-session.service';
 import { ExecutionLifecycleService } from './execution-lifecycle.service';
 import { RemoteCommandService } from '../commands/remote-command.service';
+import { EngineRegistryModule } from './engine-registry.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { RemoteCommandService } from '../commands/remote-command.service';
     RoomsModule,
     LicensingModule,
     DashboardConnectionsModule,
+    EngineRegistryModule,
   ],
   providers: [
     ConnectionRegistryService,
@@ -25,6 +27,6 @@ import { RemoteCommandService } from '../commands/remote-command.service';
     RemoteCommandService,
     EngineGateway,
   ],
-  exports: [ConnectionRegistryService, RemoteCommandService],
+  exports: [ConnectionRegistryService, RemoteCommandService, EngineRegistryModule],
 })
 export class EngineConnectionsModule {}

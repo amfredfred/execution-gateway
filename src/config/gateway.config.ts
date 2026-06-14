@@ -53,4 +53,10 @@ export default () => ({
     secret: process.env.SIGNAL_ENGINE_WS_SECRET,
     reconnectDelayMs: Number(process.env.SIGNAL_ENGINE_RECONNECT_DELAY_MS ?? 1000),
   },
+  engineRegistry: {
+    // Seconds without a heartbeat before an engine is marked stale.
+    staleAfterSeconds: Number(process.env.ENGINE_STALE_AFTER_SECONDS ?? 30),
+    // Seconds without a heartbeat before an engine is marked offline.
+    offlineAfterSeconds: Number(process.env.ENGINE_OFFLINE_AFTER_SECONDS ?? 90),
+  },
 });

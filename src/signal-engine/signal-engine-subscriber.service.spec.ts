@@ -23,10 +23,12 @@ describe('SignalEngineSubscriberService', () => {
     rooms.join('bitcoin-engine', openSocket(bitcoinSend), ['BTCUSD']);
 
     const dashboards = new DashboardConnectionRegistryService();
+    const engineRegistry = { findByBroker: jest.fn().mockReturnValue(null), getEntry: jest.fn().mockReturnValue(null) } as never;
     const subscriber = new SignalEngineSubscriberService(
       config,
       rooms,
       dashboards,
+      engineRegistry,
     );
     const frame = JSON.stringify({
       event: 'signal.triggered',
@@ -43,6 +45,38 @@ describe('SignalEngineSubscriberService', () => {
     expect(bitcoinSend).not.toHaveBeenCalled();
   });
 
+  it('routes a broker-targeted signal through the multi-agent manager', () => {
+    const config = new ConfigService();
+    const rooms = new RoomRegistryService(config);
+    const managerSend = jest.fn<void, [string]>();
+    const otherSend = jest.fn<void, [string]>();
+    rooms.join('manager-main', openSocket(managerSend), ['XAUUSD']);
+    rooms.join('other-engine', openSocket(otherSend), ['XAUUSD']);
+
+    const dashboards = new DashboardConnectionRegistryService();
+    const engineRegistry = {
+      findByBroker: jest.fn().mockReturnValue(null),
+      getEntry: jest.fn().mockReturnValue(null),
+    } as never;
+    const subscriber = new SignalEngineSubscriberService(
+      config,
+      rooms,
+      dashboards,
+      engineRegistry,
+    );
+    const frame = JSON.stringify({
+      event: 'signal.triggered',
+      payload: { id: 'signal-fbs-001', symbol: 'XAUUSD', broker: 'fbs' },
+    });
+
+    (
+      subscriber as unknown as { handleMessage(raw: Buffer): void }
+    ).handleMessage(Buffer.from(frame));
+
+    expect(managerSend).toHaveBeenCalledWith(frame);
+    expect(otherSend).not.toHaveBeenCalled();
+  });
+
   it('forwards sanitized metric snapshots only to subscribed dashboards', () => {
     const config = new ConfigService();
     const rooms = new RoomRegistryService(config);
@@ -52,10 +86,12 @@ describe('SignalEngineSubscriberService', () => {
     dashboards.add(socket);
     dashboards.authenticate(socket, 'user-001', null);
     dashboards.subscribeSignalMetrics(socket);
+    const engineRegistry = { findByBroker: jest.fn().mockReturnValue(null), getEntry: jest.fn().mockReturnValue(null) } as never;
     const subscriber = new SignalEngineSubscriberService(
       config,
       rooms,
       dashboards,
+      engineRegistry,
     );
 
     (
@@ -86,6 +122,7 @@ describe('SignalEngineSubscriberService', () => {
         active_signals: [],
         active_zones: [],
         api: {},
+        by_source: {},
         recent_events: [],
       },
     });

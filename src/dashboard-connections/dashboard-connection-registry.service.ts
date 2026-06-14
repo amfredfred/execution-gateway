@@ -182,6 +182,38 @@ export class DashboardConnectionRegistryService {
     return entry;
   }
 
+  broadcastEngineAwareness(engineId: string, awareness: unknown): void {
+    const serialized = JSON.stringify({
+      event: 'engine.awareness',
+      data: { engine_id: engineId, awareness, ts: new Date().toISOString() },
+    });
+    for (const [socket, connection] of this.connections) {
+      if (!connection.userId) continue;
+      if (socket.readyState !== WebSocket.OPEN) continue;
+      try {
+        socket.send(serialized);
+      } catch {
+        this.connections.delete(socket);
+      }
+    }
+  }
+
+  broadcastEngineHealthChanged(engineId: string, healthState: string): void {
+    const serialized = JSON.stringify({
+      event: 'engine.health_changed',
+      data: { engine_id: engineId, health_state: healthState, ts: new Date().toISOString() },
+    });
+    for (const [socket, connection] of this.connections) {
+      if (!connection.userId) continue;
+      if (socket.readyState !== WebSocket.OPEN) continue;
+      try {
+        socket.send(serialized);
+      } catch {
+        this.connections.delete(socket);
+      }
+    }
+  }
+
   broadcastEngineOffline(engineId: string): void {
     const serialized = JSON.stringify({
       event: 'engine.offline',

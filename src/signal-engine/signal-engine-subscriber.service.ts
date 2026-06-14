@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { RawData, WebSocket } from 'ws';
 import { DashboardConnectionRegistryService } from '../dashboard-connections/dashboard-connection-registry.service';
 import { RoomRegistryService } from '../rooms/room-registry.service';
+import { EngineRegistryService } from '../engine-connections/engine-registry.service';
 
 interface SignalEngineMessage {
   event?: string;
@@ -40,6 +41,7 @@ export class SignalEngineSubscriberService
     private readonly config: ConfigService,
     private readonly rooms: RoomRegistryService,
     private readonly dashboards: DashboardConnectionRegistryService,
+    private readonly engineRegistry: EngineRegistryService,
   ) {}
 
   onModuleInit() {
@@ -141,15 +143,9 @@ export class SignalEngineSubscriberService
         return;
       }
 
-      // signal.triggered → forward raw message to subscribed execution engine rooms
+      // signal.triggered → route to the matching Source Key engine
       if (event === 'signal.triggered' && message.payload?.symbol) {
-        const delivered = this.rooms.broadcast(
-          message.payload.symbol,
-          serialized,
-        );
-        this.logger.debug(
-          `Delivered ${message.payload.symbol} signal to ${delivered} engine(s)`,
-        );
+        this.routeSignal(message.payload, serialized);
         // fall through — also buffer for the dashboard event log
       }
 
@@ -163,6 +159,103 @@ export class SignalEngineSubscriberService
       this.logger.error(
         `Unhandled error in signal-engine message handler: ${String(err)}`,
       );
+    }
+  }
+
+  /**
+   * Routes a signal.triggered payload to the correct execution engine by
+   * matching the signal's broker field against the engine registry.
+   *
+   * Routing rules:
+   *  - If broker is set → find the online engine whose source_key or server
+   *    name matches, route only to that engine.
+   *  - If broker is absent → legacy broadcast to all engines (logs a warning).
+   *  - Routing is rejected if the engine is stale, offline, or unknown.
+   */
+  private routeSignal(
+    payload: Record<string, unknown> & { symbol?: string },
+    serialized: string,
+  ) {
+    const symbol = String(payload.symbol ?? '');
+    const broker = String(payload.broker ?? '').toLowerCase().trim();
+    const signalId = String(payload.id ?? payload.signal_id ?? '');
+
+    if (!broker) {
+      this.logger.warn(
+        `signal.triggered has no broker field — legacy broadcast to all engines (signal=${signalId} symbol=${symbol})`,
+      );
+      const delivered = this.rooms.broadcast(symbol, serialized);
+      this.logger.debug(
+        `Legacy broadcast: ${symbol} → ${delivered} engine(s)`,
+      );
+      return;
+    }
+
+    const targetId = this.engineRegistry.findByBroker(broker);
+
+    if (!targetId) {
+      if (this.rooms.broadcastToEngine(symbol, 'manager-main', serialized)) {
+        this.logger.debug(
+          `Routed ${symbol} signal to multi-agent manager for broker="${broker}"`,
+        );
+        return;
+      }
+      this.logger.warn(
+        `signal.routing.rejected: no engine for broker="${broker}" signal=${signalId} symbol=${symbol}`,
+      );
+      this.dashboards.pushSignalEvent('signal.routing.rejected', {
+        ...payload,
+        reason: 'no_engine_for_broker',
+        broker,
+        source_key: null,
+      });
+      return;
+    }
+
+    const entry = this.engineRegistry.getEntry(targetId);
+    const health = entry?.healthState ?? 'unknown';
+
+    if (health !== 'online') {
+      if (this.rooms.broadcastToEngine(symbol, 'manager-main', serialized)) {
+        this.logger.debug(
+          `Routed ${symbol} signal to multi-agent manager because direct engine ${targetId} is ${health}`,
+        );
+        return;
+      }
+      this.logger.warn(
+        `signal.routing.rejected: engine sourceKey=${targetId} is ${health} — broker="${broker}" signal=${signalId}`,
+      );
+      this.dashboards.pushSignalEvent('signal.routing.rejected', {
+        ...payload,
+        reason: `engine_${health}`,
+        source_key: targetId,
+        broker,
+      });
+      return;
+    }
+
+    const ok = this.rooms.broadcastToEngine(symbol, targetId, serialized);
+    if (ok) {
+      this.logger.debug(
+        `Routed ${symbol} signal → engine sourceKey=${targetId} broker="${broker}"`,
+      );
+    } else {
+      if (this.rooms.broadcastToEngine(symbol, 'manager-main', serialized)) {
+        this.logger.debug(
+          `Routed ${symbol} signal to multi-agent manager after direct room miss for broker="${broker}"`,
+        );
+        return;
+      }
+      this.logger.warn(
+        `signal.routing.missed: engine sourceKey=${targetId} (${broker}) is online but not in room ${symbol}`,
+      );
+      this.dashboards.pushSignalEvent('signal.routing.missed', {
+        ...payload,
+        reason: 'engine_not_in_room',
+        source_key: targetId,
+        broker,
+        symbol,
+      });
     }
   }
 
@@ -197,6 +290,8 @@ export class SignalEngineSubscriberService
         calls_last_min: api.calls_last_min,
         by_source: api.by_source,
       },
+      // Per-source breakdown keyed by broker name, populated by the signal manager.
+      by_source: payload.by_source ?? {},
     };
   }
 

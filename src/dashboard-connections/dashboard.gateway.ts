@@ -13,6 +13,7 @@ import { DashboardAuthService } from './dashboard-auth.service';
 import { DashboardConnectionRegistryService } from './dashboard-connection-registry.service';
 import { LicenseService } from '../licensing/license.service';
 import { RateLimitService } from '../common/rate-limit/rate-limit.service';
+import { EngineRegistryService } from '../engine-connections/engine-registry.service';
 
 // ── Rate-limit constants ───────────────────────────────────────────────────
 /** Max new dashboard WS connections accepted per IP per minute. */
@@ -44,7 +45,12 @@ export class DashboardGateway
     private readonly connections: DashboardConnectionRegistryService,
     private readonly licenses: LicenseService,
     private readonly rateLimit: RateLimitService,
-  ) {}
+    private readonly engineRegistry: EngineRegistryService,
+  ) {
+    this.engineRegistry.onHealthChanged((entry) => {
+      this.connections.broadcastEngineHealthChanged(entry.sourceKey, entry.healthState);
+    });
+  }
 
   handleConnection(socket: WebSocket, req: IncomingMessage) {
     // Resolve remote IP (supports reverse-proxy X-Forwarded-For).
@@ -177,5 +183,20 @@ export class DashboardGateway
   unsubscribeExecutionMetrics(@ConnectedSocket() socket: WebSocket) {
     this.connections.unsubscribeExecutionMetrics(socket);
     return { event: 'execution.metrics.unsubscribed', data: {} };
+  }
+
+  /** Returns all known execution sources and their latest state. */
+  @SubscribeMessage('gateway.engines.snapshot')
+  enginesSnapshot(@ConnectedSocket() socket: WebSocket) {
+    if (!this.connections.isAuthenticated(socket)) {
+      return { event: 'dashboard.authentication_required', data: {} };
+    }
+    return {
+      event: 'gateway.engines.snapshot',
+      data: {
+        engines: this.engineRegistry.snapshot(),
+        ts: new Date().toISOString(),
+      },
+    };
   }
 }
