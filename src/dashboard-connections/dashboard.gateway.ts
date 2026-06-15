@@ -49,6 +49,9 @@ export class DashboardGateway
   ) {
     this.engineRegistry.onHealthChanged((entry) => {
       this.connections.broadcastEngineHealthChanged(entry.sourceKey, entry.healthState);
+      if (entry.sourceKey !== 'manager-main') {
+        this.connections.broadcastEngineRegistryUpdated(entry);
+      }
     });
   }
 
@@ -166,7 +169,12 @@ export class DashboardGateway
     const engineId = String(message?.engine_id ?? '');
     if (!userId)
       return { event: 'dashboard.authentication_required', data: {} };
-    if (!engineId || !(await this.licenses.userOwnsEngine(userId, engineId))) {
+    const entry = this.engineRegistry.getEntry(engineId);
+    const ownershipEngineId = entry?.parentSourceKey ?? engineId;
+    if (
+      !engineId ||
+      !(await this.licenses.userOwnsEngine(userId, ownershipEngineId))
+    ) {
       return {
         event: 'execution.metrics.forbidden',
         data: { engine_id: engineId, reason: 'engine is not owned by user' },
@@ -194,7 +202,9 @@ export class DashboardGateway
     return {
       event: 'gateway.engines.snapshot',
       data: {
-        engines: this.engineRegistry.snapshot(),
+        engines: this.engineRegistry
+          .snapshot()
+          .filter((entry) => entry.sourceKey !== 'manager-main'),
         ts: new Date().toISOString(),
       },
     };

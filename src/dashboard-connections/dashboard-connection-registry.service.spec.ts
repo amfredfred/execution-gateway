@@ -33,4 +33,57 @@ describe('DashboardConnectionRegistryService', () => {
     expect(demand).toHaveBeenNthCalledWith(2, 1);
     expect(demand).toHaveBeenNthCalledWith(3, 0);
   });
+
+  it('broadcasts signal-engine events immediately to subscribed dashboards', () => {
+    const registry = new DashboardConnectionRegistryService();
+    const send = jest.fn();
+    const socket = { readyState: WebSocket.OPEN, send } as unknown as WebSocket;
+    registry.add(socket);
+    registry.authenticate(socket, 'user-001', null);
+    registry.subscribeSignalMetrics(socket);
+
+    registry.pushSignalEvent('log.info', { message: 'scanner online' });
+
+    expect(JSON.parse(send.mock.calls[0][0])).toMatchObject({
+      event: 'signal.event',
+      data: {
+        event_type: 'log.info',
+        data: { message: 'scanner online' },
+      },
+    });
+  });
+
+  it('broadcasts complete registry updates to authenticated dashboards', () => {
+    const registry = new DashboardConnectionRegistryService();
+    const send = jest.fn();
+    const socket = { readyState: WebSocket.OPEN, send } as unknown as WebSocket;
+    registry.add(socket);
+    registry.authenticate(socket, 'user-001', null);
+
+    registry.broadcastEngineRegistryUpdated({
+      sourceKey: 'execution-123',
+      connectedAt: '2026-06-15T00:00:00.000Z',
+      lastSeenAt: '2026-06-15T00:00:01.000Z',
+      lastMetricsAt: '2026-06-15T00:00:01.000Z',
+      lastAwarenessAt: null,
+      healthState: 'online',
+      latestMetrics: { balance: 1000 },
+      latestAwareness: null,
+      lastError: null,
+      account: null,
+      deviceName: null,
+      engineVersion: null,
+      parentSourceKey: 'manager-main',
+    });
+
+    expect(JSON.parse(send.mock.calls[0][0])).toMatchObject({
+      event: 'engine.registry.updated',
+      data: {
+        entry: {
+          sourceKey: 'execution-123',
+          latestMetrics: { balance: 1000 },
+        },
+      },
+    });
+  });
 });

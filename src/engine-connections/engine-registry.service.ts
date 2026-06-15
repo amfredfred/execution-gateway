@@ -39,6 +39,7 @@ export interface EngineRegistryEntry {
   account: Mt5AccountMetadata | null;
   deviceName: string | null;
   engineVersion: string | null;
+  parentSourceKey?: string | null;
 }
 
 type HealthListener = (entry: EngineRegistryEntry) => void;
@@ -88,6 +89,7 @@ export class EngineRegistryService implements OnModuleInit, OnModuleDestroy {
       account: account ?? existing?.account ?? null,
       deviceName: deviceName ?? existing?.deviceName ?? null,
       engineVersion: engineVersion ?? existing?.engineVersion ?? null,
+      parentSourceKey: existing?.parentSourceKey ?? null,
     };
     this.entries.set(sourceKey, entry);
     this.logger.log(
@@ -108,11 +110,46 @@ export class EngineRegistryService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  upsertManagedSource(
+    sourceKey: string,
+    parentSourceKey: string,
+    account: Mt5AccountMetadata | null,
+    awareness: EngineAwarenessPayload,
+    metrics: unknown,
+    deviceName?: string,
+  ): void {
+    const now = new Date().toISOString();
+    const existing = this.entries.get(sourceKey);
+    const entry: EngineRegistryEntry = {
+      sourceKey,
+      connectedAt: existing?.connectedAt ?? now,
+      lastSeenAt: now,
+      lastMetricsAt: now,
+      lastAwarenessAt: now,
+      healthState: awareness.runtime_state === 'error' ? 'error' : 'online',
+      latestMetrics: metrics,
+      latestAwareness: awareness,
+      lastError: awareness.last_error ? String(awareness.last_error) : null,
+      account,
+      deviceName: deviceName ?? existing?.deviceName ?? null,
+      engineVersion: existing?.engineVersion ?? null,
+      parentSourceKey,
+    };
+    this.entries.set(sourceKey, entry);
+    if (!existing) {
+      this.logger.log(
+        `Managed source registered: sourceKey=${sourceKey} parent=${parentSourceKey} account=${account?.login ?? 'none'}`,
+      );
+    }
+    this.emit(entry);
+  }
+
   recordMetrics(sourceKey: string, metrics: unknown): void {
     const entry = this.entries.get(sourceKey);
     if (!entry) return;
     entry.lastMetricsAt = new Date().toISOString();
     entry.latestMetrics = metrics;
+    this.emit(entry);
   }
 
   updateAwareness(sourceKey: string, awareness: EngineAwarenessPayload): void {

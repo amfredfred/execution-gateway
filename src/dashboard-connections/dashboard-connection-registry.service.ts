@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { WebSocket } from 'ws';
+import type { EngineRegistryEntry } from '../engine-connections/engine-registry.service';
 
 export interface ExecutionEventEntry {
   id: string;
@@ -98,6 +99,16 @@ export class DashboardConnectionRegistryService {
     this.signalEventBuffer.unshift(entry);
     if (this.signalEventBuffer.length > 200)
       this.signalEventBuffer.length = 200;
+    const serialized = JSON.stringify({ event: 'signal.event', data: entry });
+    for (const [socket, connection] of this.connections) {
+      if (!connection.userId || !connection.signalMetrics) continue;
+      if (socket.readyState !== WebSocket.OPEN) continue;
+      try {
+        socket.send(serialized);
+      } catch {
+        this.connections.delete(socket);
+      }
+    }
     return entry;
   }
 
@@ -202,6 +213,22 @@ export class DashboardConnectionRegistryService {
     const serialized = JSON.stringify({
       event: 'engine.health_changed',
       data: { engine_id: engineId, health_state: healthState, ts: new Date().toISOString() },
+    });
+    for (const [socket, connection] of this.connections) {
+      if (!connection.userId) continue;
+      if (socket.readyState !== WebSocket.OPEN) continue;
+      try {
+        socket.send(serialized);
+      } catch {
+        this.connections.delete(socket);
+      }
+    }
+  }
+
+  broadcastEngineRegistryUpdated(entry: EngineRegistryEntry): void {
+    const serialized = JSON.stringify({
+      event: 'engine.registry.updated',
+      data: { entry, ts: new Date().toISOString() },
     });
     for (const [socket, connection] of this.connections) {
       if (!connection.userId) continue;

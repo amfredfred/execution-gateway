@@ -448,13 +448,66 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.connections.touch(socket);
 
     const payload = (message?.payload ?? {}) as Record<string, unknown>;
+    const requestedEngineId = String(payload.engine_id ?? '');
+    const targetEngineId =
+      engineId === 'manager-main' && requestedEngineId
+        ? requestedEngineId
+        : engineId;
     const eventType = String(
       payload.event_type ?? payload.type ?? payload.event ?? 'unknown',
     );
     const data: unknown = payload.data !== undefined ? payload.data : payload;
 
-    this.dashboards.pushEngineEvent(engineId, eventType, data);
+    this.dashboards.pushEngineEvent(targetEngineId, eventType, data);
 
+    return {
+      event: 'protocol.accepted',
+      data: { accepted_at: new Date().toISOString() },
+    };
+  }
+
+  @SubscribeMessage('manager.agent.snapshot')
+  managerAgentSnapshot(
+    @ConnectedSocket() socket: WebSocket,
+    @MessageBody() message: { payload?: unknown },
+  ) {
+    const parentEngineId = this.connections.engineId(socket);
+    if (
+      parentEngineId !== 'manager-main' ||
+      !this.connections.engineDeviceId(socket)
+    ) {
+      return this.rejected(undefined, ['manager-main activation required']);
+    }
+    const payload = (message?.payload ?? {}) as Record<string, unknown>;
+    const engineId = String(payload.engine_id ?? '');
+    if (!engineId) return this.rejected(undefined, ['engine_id is required']);
+    const account = (payload.account ?? null) as Mt5AccountMetadata | null;
+    const awareness = (payload.awareness ?? {}) as EngineAwarenessPayload;
+    const metrics = payload.metrics ?? {};
+    const snapshot =
+      typeof metrics === 'object' &&
+      metrics !== null &&
+      'metrics' in metrics
+        ? metrics
+        : {
+            connected: awareness.terminal_connected !== false,
+            engine: {
+              ...awareness,
+              account,
+            },
+            metrics,
+          };
+    this.connections.touch(socket);
+    this.engineRegistry.upsertManagedSource(
+      engineId,
+      parentEngineId,
+      account,
+      awareness,
+      snapshot,
+      String(payload.display_name ?? ''),
+    );
+    this.dashboards.broadcastEngineAwareness(engineId, awareness);
+    this.dashboards.broadcastExecutionMetrics(engineId, snapshot);
     return {
       event: 'protocol.accepted',
       data: { accepted_at: new Date().toISOString() },
