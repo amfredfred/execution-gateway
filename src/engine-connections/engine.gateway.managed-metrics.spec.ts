@@ -7,7 +7,7 @@ describe('EngineGateway managed metrics', () => {
     const socket = {} as WebSocket;
     const connections = {
       onStale: jest.fn(),
-      engineId: jest.fn().mockReturnValue('manager-main'),
+      engineId: jest.fn().mockReturnValue('AQM-test-machine-guid'),
       engineDeviceId: jest.fn().mockReturnValue('manager-device'),
       touch: jest.fn(),
     };
@@ -65,7 +65,7 @@ describe('EngineGateway managed metrics', () => {
     };
     expect(engineRegistry.upsertManagedSource).toHaveBeenCalledWith(
       'execution-123',
-      'manager-main',
+      'AQM-test-machine-guid',
       { login: '123', server: 'Broker', mode: 'live' },
       { terminal_connected: true, runtime_state: 'running' },
       expectedSnapshot,
@@ -81,7 +81,7 @@ describe('EngineGateway managed metrics', () => {
     const socket = {} as WebSocket;
     const connections = {
       onStale: jest.fn(),
-      engineId: jest.fn().mockReturnValue('manager-main'),
+      engineId: jest.fn().mockReturnValue('AQM-test-machine-guid'),
       engineDeviceId: jest.fn().mockReturnValue('manager-device'),
       touch: jest.fn(),
     };

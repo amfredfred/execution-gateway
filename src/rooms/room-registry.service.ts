@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { WebSocket } from 'ws';
+import { isManagerEngineId } from '../engine-connections/manager-engine';
 
 interface Membership {
   engineId: string;
@@ -124,6 +125,26 @@ export class RoomRegistryService implements OnModuleInit, OnModuleDestroy {
       return false;
     membership.socket.send(serializedFrame);
     return true;
+  }
+
+  /**
+   * Delivers a signal frame to the first manager engine (AQM-* or legacy
+   * 'manager-main') found in the given symbol room.
+   * Returns true if a manager was found and the send succeeded.
+   */
+  broadcastToManager(symbol: string, serializedFrame: string): boolean {
+    const room = this.rooms.get(this.normalizeSymbol(symbol));
+    if (!room) return false;
+    for (const membership of room.members.values()) {
+      if (
+        isManagerEngineId(membership.engineId) &&
+        membership.socket.readyState === WebSocket.OPEN
+      ) {
+        membership.socket.send(serializedFrame);
+        return true;
+      }
+    }
+    return false;
   }
 
   onSymbolsChanged(listener: SymbolsChangedListener) {

@@ -24,6 +24,7 @@ import { RemoteCommandService } from '../commands/remote-command.service';
 import { RateLimitService } from '../common/rate-limit/rate-limit.service';
 import type { Mt5AccountMetadata } from '../licensing/license.types';
 import { EngineRegistryService, type EngineAwarenessPayload } from './engine-registry.service';
+import { isManagerEngineId } from './manager-engine';
 
 // ── Rate-limit constants ───────────────────────────────────────────────────
 /** Max new engine WS connections accepted per IP per minute. */
@@ -177,8 +178,8 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
         // Rotate the credential on every successful fast-path activation
         const rawCred = result.activation.engineDeviceId
           ? await this.licenses.issueDeviceCredential(
-              result.activation.engineDeviceId,
-            )
+            result.activation.engineDeviceId,
+          )
           : null;
         this.engineRegistry.register(engineId, accounts[0] ?? null);
         this.logger.log(`Engine ${engineId}: fast-path credential activation`);
@@ -333,8 +334,8 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     // 1.16 — Issue a device credential so the engine can fast-path reconnect
     const rawCred = result.activation.engineDeviceId
       ? await this.licenses.issueDeviceCredential(
-          result.activation.engineDeviceId,
-        )
+        result.activation.engineDeviceId,
+      )
       : null;
     this.engineRegistry.register(
       engineId,
@@ -450,7 +451,7 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const payload = (message?.payload ?? {}) as Record<string, unknown>;
     const requestedEngineId = String(payload.engine_id ?? '');
     const targetEngineId =
-      engineId === 'manager-main' && requestedEngineId
+      isManagerEngineId(engineId) && requestedEngineId
         ? requestedEngineId
         : engineId;
     const eventType = String(
@@ -473,10 +474,10 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {
     const parentEngineId = this.connections.engineId(socket);
     if (
-      parentEngineId !== 'manager-main' ||
+      !isManagerEngineId(parentEngineId) ||
       !this.connections.engineDeviceId(socket)
     ) {
-      return this.rejected(undefined, ['manager-main activation required']);
+      return this.rejected(undefined, ['manager activation required']);
     }
     const payload = (message?.payload ?? {}) as Record<string, unknown>;
     const engineId = String(payload.engine_id ?? '');
@@ -486,17 +487,17 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const metrics = payload.metrics ?? {};
     const snapshot =
       typeof metrics === 'object' &&
-      metrics !== null &&
-      'metrics' in metrics
+        metrics !== null &&
+        'metrics' in metrics
         ? metrics
         : {
-            connected: awareness.terminal_connected !== false,
-            engine: {
-              ...awareness,
-              account,
-            },
-            metrics,
-          };
+          connected: awareness.terminal_connected !== false,
+          engine: {
+            ...awareness,
+            account,
+          },
+          metrics,
+        };
     this.connections.touch(socket);
     this.engineRegistry.upsertManagedSource(
       engineId,

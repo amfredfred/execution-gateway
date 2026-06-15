@@ -194,7 +194,7 @@ export class SignalEngineSubscriberService
     const targetId = this.engineRegistry.findByBroker(broker);
 
     if (!targetId) {
-      if (this.rooms.broadcastToEngine(symbol, 'manager-main', serialized)) {
+      if (this.rooms.broadcastToManager(symbol, serialized)) {
         this.logger.debug(
           `Routed ${symbol} signal to multi-agent manager for broker="${broker}"`,
         );
@@ -216,7 +216,7 @@ export class SignalEngineSubscriberService
     const health = entry?.healthState ?? 'unknown';
 
     if (health !== 'online') {
-      if (this.rooms.broadcastToEngine(symbol, 'manager-main', serialized)) {
+      if (this.rooms.broadcastToManager(symbol, serialized)) {
         this.logger.debug(
           `Routed ${symbol} signal to multi-agent manager because direct engine ${targetId} is ${health}`,
         );
@@ -240,7 +240,7 @@ export class SignalEngineSubscriberService
         `Routed ${symbol} signal → engine sourceKey=${targetId} broker="${broker}"`,
       );
     } else {
-      if (this.rooms.broadcastToEngine(symbol, 'manager-main', serialized)) {
+      if (this.rooms.broadcastToManager(symbol, serialized)) {
         this.logger.debug(
           `Routed ${symbol} signal to multi-agent manager after direct room miss for broker="${broker}"`,
         );

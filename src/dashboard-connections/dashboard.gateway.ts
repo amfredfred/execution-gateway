@@ -14,6 +14,7 @@ import { DashboardConnectionRegistryService } from './dashboard-connection-regis
 import { LicenseService } from '../licensing/license.service';
 import { RateLimitService } from '../common/rate-limit/rate-limit.service';
 import { EngineRegistryService } from '../engine-connections/engine-registry.service';
+import { isManagerEngineId } from '../engine-connections/manager-engine';
 
 // ── Rate-limit constants ───────────────────────────────────────────────────
 /** Max new dashboard WS connections accepted per IP per minute. */
@@ -49,7 +50,7 @@ export class DashboardGateway
   ) {
     this.engineRegistry.onHealthChanged((entry) => {
       this.connections.broadcastEngineHealthChanged(entry.sourceKey, entry.healthState);
-      if (entry.sourceKey !== 'manager-main') {
+      if (!isManagerEngineId(entry.sourceKey)) {
         this.connections.broadcastEngineRegistryUpdated(entry);
       }
     });
@@ -204,7 +205,7 @@ export class DashboardGateway
       data: {
         engines: this.engineRegistry
           .snapshot()
-          .filter((entry) => entry.sourceKey !== 'manager-main'),
+          .filter((entry) => !isManagerEngineId(entry.sourceKey)),
         ts: new Date().toISOString(),
       },
     };

@@ -50,7 +50,7 @@ describe('SignalEngineSubscriberService', () => {
     const rooms = new RoomRegistryService(config);
     const managerSend = jest.fn<void, [string]>();
     const otherSend = jest.fn<void, [string]>();
-    rooms.join('manager-main', openSocket(managerSend), ['XAUUSD']);
+    rooms.join('AQM-test-machine-guid', openSocket(managerSend), ['XAUUSD']);
     rooms.join('other-engine', openSocket(otherSend), ['XAUUSD']);
 
     const dashboards = new DashboardConnectionRegistryService();
