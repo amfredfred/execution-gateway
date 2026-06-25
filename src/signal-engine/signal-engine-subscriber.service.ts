@@ -17,8 +17,7 @@ interface SignalEngineMessage {
 
 @Injectable()
 export class SignalEngineSubscriberService
-  implements OnModuleInit, OnModuleDestroy
-{
+  implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SignalEngineSubscriberService.name);
   private socket?: WebSocket;
   private reconnectTimer?: NodeJS.Timeout;
@@ -42,7 +41,7 @@ export class SignalEngineSubscriberService
     private readonly rooms: RoomRegistryService,
     private readonly dashboards: DashboardConnectionRegistryService,
     private readonly engineRegistry: EngineRegistryService,
-  ) {}
+  ) { }
 
   onModuleInit() {
     this.unsubscribeRoomChanges = this.rooms.onSymbolsChanged((symbols) => {
@@ -93,6 +92,7 @@ export class SignalEngineSubscriberService
     });
     this.socket.on('error', (error) => {
       this.logger.warn(`Signal Engine connection error: ${error.message}`);
+      this.logger.warn(error);
     });
     // Terminate zombie connections: if a pong is not received within the ping
     // interval, the ws library will emit 'error' + 'close', triggering reconnect.
