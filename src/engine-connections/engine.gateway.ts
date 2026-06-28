@@ -549,12 +549,12 @@ export class EngineGateway implements OnGatewayConnection, OnGatewayDisconnect {
       socket,
       symbols,
     );
-    if (authorizationErrors.length > 0) {
-      this.logger.warn(
-        `room.subscribe rejected: engine=${engineId} symbols=${symbols.join(',')} errors=${authorizationErrors.join(',')}`,
-      );
-      return this.rejected(message.message_id, authorizationErrors);
-    }
+    // if (authorizationErrors.length > 0) {
+    //   this.logger.warn(
+    //     `room.subscribe rejected: engine=${engineId} symbols=${symbols.join(',')} errors=${authorizationErrors.join(',')}`,
+    //   );
+    //   return this.rejected(message.message_id, authorizationErrors);
+    // }
 
     const requestedTtl = accepted.message.payload.ttl_seconds as
       | number
