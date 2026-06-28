@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://apexquantel.app/protocol/v1/execution-lifecycle.schema.json",
+  "title": "Execution Lifecycle Transition",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["engine_id", "signal_id", "account_login", "stage", "observed_at"],
+  "properties": {
+    "engine_id": { "type": "string", "minLength": 8, "maxLength": 128 },
+    "signal_id": { "type": "string", "minLength": 8, "maxLength": 128 },
+    "account_login": { "type": "string", "minLength": 1, "maxLength": 40 },
+    "stage": {
+      "type": "string",
+      "enum": ["received", "accepted", "rejected", "attempted", "opened", "failed"]
+    },
+    "reason": { "type": "string", "maxLength": 1000 },
+    "trade_id": { "type": "string", "maxLength": 128 },
+    "broker_ticket": { "type": "string", "maxLength": 128 },
+    "observed_at": { "type": "string", "format": "date-time" }
+  }
+}

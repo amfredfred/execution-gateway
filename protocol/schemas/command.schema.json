@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://apexquantel.app/protocol/v1/command.schema.json",
+  "title": "Remote Engine Command",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["command_id", "engine_id", "type", "issued_at", "expires_at"],
+  "properties": {
+    "command_id": { "type": "string", "minLength": 8, "maxLength": 128 },
+    "engine_id": { "type": "string", "minLength": 8, "maxLength": 128 },
+    "type": { "type": "string", "enum": ["pause", "resume", "emergency_stop"] },
+    "issued_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "reason": { "type": "string", "maxLength": 500 }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "protocol_version": "1.0",
+  "message_id": "msg_01J_APEX_SIGNAL",
+  "event": "signal.deliver",
+  "sent_at": "2026-06-06T12:00:00.000Z",
+  "payload": {
+    "signal_id": "signal_01J_APEX_XAUUSD",
+    "sequence": 1842,
+    "strategy_id": "private-xau-v1",
+    "broker": "fundednext",
+    "symbol": "XAUUSD",
+    "direction": "LONG",
+    "order_type": "market",
+    "entry": 3342.5,
+    "stop_loss": 3334,
+    "take_profits": [3351, 3360],
+    "issued_at": "2026-06-06T12:00:00.000Z",
+    "expires_at": "2026-06-06T12:01:00.000Z",
+    "signature_algorithm": "Ed25519",
+    "signature": "base64-signature-placeholder-value"
+  }
+}

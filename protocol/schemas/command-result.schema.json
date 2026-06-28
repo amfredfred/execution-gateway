@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://apexquantel.app/protocol/v1/command-result.schema.json",
+  "title": "Remote Command Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["command_id", "engine_id", "status", "observed_at"],
+  "properties": {
+    "command_id": { "type": "string", "minLength": 8, "maxLength": 128 },
+    "engine_id": { "type": "string", "minLength": 8, "maxLength": 128 },
+    "status": { "type": "string", "enum": ["completed", "failed"] },
+    "reason": { "type": "string", "maxLength": 1000 },
+    "observed_at": { "type": "string", "format": "date-time" }
+  }
+}

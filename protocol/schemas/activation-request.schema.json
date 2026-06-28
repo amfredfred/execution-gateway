@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://apexquantel.app/protocol/v1/activation-request.schema.json",
+  "title": "Execution Engine Activation Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "activation_key",
+    "device_name",
+    "engine_version",
+    "platform",
+    "mt5_accounts"
+  ],
+  "properties": {
+    "activation_key": { "type": "string", "minLength": 16, "maxLength": 256 },
+    "device_name": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "device_public_key": {
+      "type": "string",
+      "minLength": 32,
+      "maxLength": 4096
+    },
+    "engine_version": { "type": "string", "minLength": 1, "maxLength": 40 },
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "architecture"],
+      "properties": {
+        "os": { "type": "string", "enum": ["windows"] },
+        "architecture": { "type": "string", "enum": ["x64", "arm64"] },
+        "mt5_installation_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "mt5_terminal_build": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "mt5_accounts": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["login", "server", "mode"],
+        "properties": {
+          "login": { "type": "string", "minLength": 1, "maxLength": 40 },
+          "server": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "mode": { "type": "string", "enum": ["demo", "live"] }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://apexquantel.app/protocol/v1/signal-deliver.schema.json",
+  "title": "Released Signal Delivery",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["signal_id", "sequence", "strategy_id", "broker", "symbol", "direction", "entry", "stop_loss", "take_profits", "issued_at", "expires_at", "signature"],
+  "properties": {
+    "signal_id": { "type": "string", "minLength": 8, "maxLength": 128 },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "strategy_id": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "broker": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "symbol": { "type": "string", "minLength": 1, "maxLength": 40 },
+    "direction": { "type": "string", "enum": ["LONG", "SHORT"] },
+    "order_type": { "type": "string", "enum": ["market"], "default": "market" },
+    "entry": { "type": "number", "exclusiveMinimum": 0 },
+    "stop_loss": { "type": "number", "exclusiveMinimum": 0 },
+    "take_profits": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5,
+      "items": { "type": "number", "exclusiveMinimum": 0 }
+    },
+    "issued_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "signature_algorithm": { "type": "string", "enum": ["Ed25519"], "default": "Ed25519" },
+    "signature": { "type": "string", "minLength": 32, "maxLength": 4096 }
+  }
+}

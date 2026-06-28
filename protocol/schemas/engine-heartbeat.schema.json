@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://apexquantel.app/protocol/v1/engine-heartbeat.schema.json",
+  "title": "Engine Heartbeat",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["engine_id", "status", "sequence", "observed_at"],
+  "properties": {
+    "engine_id": { "type": "string", "minLength": 8, "maxLength": 128 },
+    "status": { "type": "string", "enum": ["starting", "running", "paused", "degraded", "stopping"] },
+    "sequence": { "type": "integer", "minimum": 0 },
+    "observed_at": { "type": "string", "format": "date-time" },
+    "mt5_connected": { "type": "boolean" },
+    "signal_queue_depth": { "type": "integer", "minimum": 0 }
+  }
+}

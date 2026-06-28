@@ -1,0 +1,14 @@
+{
+  "protocol_version": "1.0",
+  "message_id": "msg_01J_APEX_HEARTBEAT",
+  "event": "engine.heartbeat",
+  "sent_at": "2026-06-06T12:00:00.000Z",
+  "payload": {
+    "engine_id": "engine_01J_APEX_DEVICE",
+    "status": "running",
+    "sequence": 42,
+    "observed_at": "2026-06-06T12:00:00.000Z",
+    "mt5_connected": true,
+    "signal_queue_depth": 0
+  }
+}

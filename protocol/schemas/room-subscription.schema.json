@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://apexquantel.app/protocol/v1/room-subscription.schema.json",
+  "title": "Symbol Room Subscription Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["engine_id", "symbols"],
+  "properties": {
+    "engine_id": { "type": "string", "minLength": 8, "maxLength": 128 },
+    "symbols": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 40,
+        "pattern": "^[A-Za-z0-9._/-]+$"
+      }
+    },
+    "ttl_seconds": {
+      "type": "integer",
+      "minimum": 30,
+      "maximum": 86400,
+      "default": 3600
+    }
+  }
+}

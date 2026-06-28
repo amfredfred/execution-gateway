@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://apexquantel.app/protocol/v1/telemetry-snapshot.schema.json",
+  "title": "Execution Engine Telemetry Snapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["engine_id", "account_login", "observed_at", "currency", "balance", "equity", "open_positions", "risk"],
+  "properties": {
+    "engine_id": { "type": "string", "minLength": 8, "maxLength": 128 },
+    "account_login": { "type": "string", "minLength": 1, "maxLength": 40 },
+    "observed_at": { "type": "string", "format": "date-time" },
+    "currency": { "type": "string", "minLength": 3, "maxLength": 8 },
+    "balance": { "type": "number" },
+    "equity": { "type": "number" },
+    "free_margin": { "type": "number" },
+    "daily_pnl": { "type": "number" },
+    "drawdown_percent": { "type": "number", "minimum": 0 },
+    "open_positions": { "type": "integer", "minimum": 0 },
+    "risk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trading_enabled", "daily_loss_percent", "losing_streak"],
+      "properties": {
+        "trading_enabled": { "type": "boolean" },
+        "daily_loss_percent": { "type": "number", "minimum": 0 },
+        "losing_streak": { "type": "integer", "minimum": 0 },
+        "pause_reason": { "type": ["string", "null"], "maxLength": 500 }
+      }
+    }
+  }
+}
