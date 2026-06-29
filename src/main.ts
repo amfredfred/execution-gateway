@@ -7,7 +7,7 @@ async function bootstrap() {
   // rawBody: true enables req.rawBody for webhook signature verification.
   const app = await NestFactory.create(AppModule, {
     rawBody: true,
-    logger: ['error', 'warn', 'log'],
+    logger: ['error', 'warn', 'log', 'debug'],
   });
   const config = app.get(ConfigService);
 
